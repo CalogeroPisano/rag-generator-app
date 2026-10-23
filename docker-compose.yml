@@ -1,0 +1,86 @@
+# Code-to-RAG — on-premise deployment.
+#   cp .env.example .env   # then set the secrets
+#   docker compose up -d --build
+# Optional local models (Ollama): docker compose --profile ollama up -d
+
+name: code-to-rag
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://${POSTGRES_USER:-code_to_rag}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-code_to_rag}
+  APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env}
+  DATA_DIR: /data
+  LOG_FORMAT: json
+  ACQUISITION_MAX_ARCHIVE_MB: ${ACQUISITION_MAX_ARCHIVE_MB:-200}
+  ACQUISITION_MAX_TOTAL_MB: ${ACQUISITION_MAX_TOTAL_MB:-1024}
+  ACQUISITION_MAX_FILE_MB: ${ACQUISITION_MAX_FILE_MB:-1}
+  ACQUISITION_MAX_FILES: ${ACQUISITION_MAX_FILES:-50000}
+  GIT_ALLOW_HTTP: ${GIT_ALLOW_HTTP:-false}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-code_to_rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-code_to_rag}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Exposed on localhost only, for development tools and tests.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build: { context: ., target: migrate }
+    image: code-to-rag/migrate:${APP_VERSION:-dev}
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  web:
+    build: { context: ., target: web }
+    image: code-to-rag/web:${APP_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:3000}
+      AUTH_ALLOW_SIGNUP: ${AUTH_ALLOW_SIGNUP:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    volumes:
+      - app-data:/data
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    build: { context: ., target: worker }
+    image: code-to-rag/worker:${APP_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    volumes:
+      # Shared with web: uploads are written by web and read by the worker.
+      - app-data:/data
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  ollama:
+    image: ollama/ollama:0.40.7
+    profiles: ["ollama"]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+
+volumes:
+  postgres-data:
+  app-data:
+  ollama-data:

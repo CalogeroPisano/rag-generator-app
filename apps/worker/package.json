@@ -1,0 +1,23 @@
+{
+  "name": "@code-to-rag/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "vite build",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts"
+  },
+  "dependencies": {
+    "@code-to-rag/core": "workspace:*",
+    "@code-to-rag/db": "workspace:*",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@code-to-rag/analysis": "workspace:*",
+    "fflate": "0.8.3",
+    "vite": "8.3.5"
+  }
+}

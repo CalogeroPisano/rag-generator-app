@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+**/routeTree.gen.ts
+**/dist/**
+**/migrations/**
+apps/web/src/components/ui/**
+apps/web/src/hooks/use-mobile.ts
+.data

@@ -1,0 +1,20 @@
+{
+  "$comment": "Distributed packages whose license is outside the policy, approved explicitly. Each entry needs the exact SPDX expression, the reason and who approved it.",
+  "packages": {
+    "tslib": {
+      "license": "0BSD",
+      "reason": "Runtime helper of Radix UI (shadcn/ui). 0BSD imposes no obligations.",
+      "approvedBy": "project owner, 2026-10-21"
+    },
+    "isbot": {
+      "license": "Unlicense",
+      "reason": "Used by TanStack Router/Start for bot detection during SSR. Public domain dedication.",
+      "approvedBy": "project owner, 2026-10-21"
+    },
+    "pako": {
+      "license": "(MIT AND Zlib)",
+      "reason": "zlib implementation used by isomorphic-git. Zlib is permissive; notices ship in third-party-licenses.",
+      "approvedBy": "project owner, 2026-10-21"
+    }
+  }
+}

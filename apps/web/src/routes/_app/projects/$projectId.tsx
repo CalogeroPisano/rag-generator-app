@@ -1,0 +1,238 @@
+import { queryOptions, useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query"
+import { createFileRoute } from "@tanstack/react-router"
+import {
+  FileArchiveIcon,
+  GitBranchIcon,
+  GitCommitHorizontalIcon,
+  HashIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon
+} from "lucide-react"
+import { useState } from "react"
+import { toast } from "sonner"
+import { DependencyOverview } from "@/components/analysis/dependency-overview"
+import { SymbolsTable } from "@/components/analysis/symbols-table"
+import { FileExplorer, type FileSelection } from "@/components/file-explorer"
+import { JobProgress } from "@/components/job-progress"
+import { PageHeader } from "@/components/page-header"
+import { AnalysisStatusBadge, SnapshotStatusBadge } from "@/components/status-badge"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Spinner } from "@/components/ui/spinner"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { reanalyze } from "@/functions/analysis.functions"
+import { getProject, listFiles, retryJob } from "@/functions/projects.functions"
+import { useJobStream } from "@/hooks/use-job-stream"
+import { formatDateTime } from "@/lib/format"
+
+const projectQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: ["project", projectId],
+    queryFn: () => getProject({ data: { projectId } })
+  })
+
+const filesQuery = (snapshotId: string) =>
+  queryOptions({
+    queryKey: ["files", snapshotId],
+    queryFn: () => listFiles({ data: { snapshotId } }),
+    staleTime: Infinity
+  })
+
+export const Route = createFileRoute("/_app/projects/$projectId")({
+  loader: ({ context, params }) =>
+    context.queryClient.query({ ...projectQuery(params.projectId), staleTime: "static" }),
+  head: ({ loaderData }) => ({
+    meta: [{ title: `${loaderData?.project.name ?? "Progetto"} · Code-to-RAG` }]
+  }),
+  component: ProjectPage
+})
+
+function Stat({ label, value, hint }: { label: string; value: number; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border p-4">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-2xl font-semibold tabular-nums">{value.toLocaleString("it-IT")}</span>
+      {hint !== undefined && <span className="text-xs text-muted-foreground">{hint}</span>}
+    </div>
+  )
+}
+
+type ProjectTab = "files" | "symbols" | "dependencies"
+
+function AnalysisPending({ status }: { status: string | null }) {
+  return (
+    <Empty className="border">
+      <EmptyHeader>
+        <EmptyTitle>{status === "failed" ? "Analisi statica non riuscita" : "Analisi statica in corso"}</EmptyTitle>
+        <EmptyDescription>
+          {status === "failed"
+            ? "Riprova dal riquadro di avanzamento o con «Rianalizza»."
+            : "Simboli e dipendenze saranno disponibili al termine dell'analisi."}
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  )
+}
+
+function ProjectPage() {
+  const { projectId } = Route.useParams()
+  const queryClient = useQueryClient()
+  const { data: summary } = useSuspenseQuery(projectQuery(projectId))
+  const { project, latestSnapshot: snapshot, latestJob: job } = summary
+  const [tab, setTab] = useState<ProjectTab>("files")
+  const [selection, setSelection] = useState<FileSelection | undefined>()
+
+  // When a job ends, everything derived from the snapshot may have changed.
+  const stream = useJobStream(job?.status === "succeeded" ? undefined : job?.id, String(job?.updatedAt), () => {
+    void queryClient.invalidateQueries()
+  })
+
+  const retry = useMutation({
+    mutationFn: (jobId: string) => retryJob({ data: { jobId } }),
+    onSuccess: () => {
+      toast.info("Job riavviato dalla fase fallita")
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] })
+    },
+    onError: (error) => toast.error(error.message)
+  })
+
+  const startAnalysis = useMutation({
+    mutationFn: (snapshotId: string) => reanalyze({ data: { snapshotId } }),
+    onSuccess: () => {
+      toast.info("Analisi statica avviata")
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] })
+    },
+    onError: (error) => toast.error(error.message)
+  })
+
+  const readySnapshot = snapshot?.status === "ready" ? snapshot : null
+  const analysisReady = readySnapshot?.analysisStatus === "ready"
+  const jobActive = job !== null && (job.status === "queued" || job.status === "running")
+  const files = useQuery({ ...filesQuery(readySnapshot?.id ?? ""), enabled: readySnapshot !== null })
+
+  const openFile = (next: FileSelection) => {
+    setSelection(next)
+    setTab("files")
+  }
+
+  return (
+    <>
+      <PageHeader
+        title={project.name}
+        breadcrumbs={[{ label: "Progetti", to: "/projects" }, { label: project.name }]}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">
+              {project.sourceType === "git" ? <GitBranchIcon /> : <FileArchiveIcon />}
+              {project.sourceType === "git" ? "Git" : "Zip"}
+            </Badge>
+            {project.repositoryUrl !== null && <span className="truncate">{project.repositoryUrl}</span>}
+            {project.repositoryRef !== null && <Badge variant="secondary">{project.repositoryRef}</Badge>}
+            <span>Creato il {formatDateTime(project.createdAt)}</span>
+          </span>
+        }
+        actions={snapshot !== null ? <SnapshotStatusBadge status={snapshot.status} /> : undefined}
+      />
+
+      {job !== null && job.status !== "succeeded" && (
+        <JobProgress stream={stream} onRetry={() => retry.mutate(job.id)} retrying={retry.isPending} />
+      )}
+
+      {readySnapshot !== null && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Versione acquisita</CardTitle>
+            <CardDescription className="flex items-center gap-2 font-mono text-xs">
+              {readySnapshot.commitSha !== null ? (
+                <>
+                  <GitCommitHorizontalIcon className="size-4" /> {readySnapshot.commitSha}
+                </>
+              ) : (
+                <>
+                  <HashIcon className="size-4" /> {readySnapshot.contentHash}
+                </>
+              )}
+            </CardDescription>
+            <CardAction className="flex items-center gap-2">
+              {readySnapshot.analysisStatus !== null && <AnalysisStatusBadge status={readySnapshot.analysisStatus} />}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={jobActive || startAnalysis.isPending}
+                onClick={() => startAnalysis.mutate(readySnapshot.id)}
+              >
+                {startAnalysis.isPending ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <RefreshCwIcon data-icon="inline-start" />
+                )}
+                Rianalizza
+              </Button>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            <Stat label="File analizzati" value={readySnapshot.includedFiles} />
+            <Stat
+              label="Voci escluse"
+              value={readySnapshot.excludedFiles}
+              hint="Dipendenze, build, binari, file generati o sensibili"
+            />
+            <Stat label="Credenziali mascherate" value={readySnapshot.maskedSecrets} hint="Prima di ogni salvataggio" />
+            <Stat label="Simboli" value={readySnapshot.symbolCount} hint="Classi, funzioni, costanti…" />
+            <Stat label="Dipendenze" value={readySnapshot.dependencyCount} hint="Import tra file e verso librerie" />
+          </CardContent>
+        </Card>
+      )}
+
+      {readySnapshot !== null && (
+        <Tabs value={tab} onValueChange={(value) => setTab(value as ProjectTab)} className="gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <TabsList>
+              <TabsTrigger value="files">File</TabsTrigger>
+              <TabsTrigger value="symbols">Simboli</TabsTrigger>
+              <TabsTrigger value="dependencies">Dipendenze</TabsTrigger>
+            </TabsList>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ShieldCheckIcon className="size-3.5" /> Contenuto mostrato già mascherato
+            </span>
+          </div>
+          <TabsContent value="files">
+            {files.data === undefined ? (
+              <Skeleton className="h-[70vh] w-full" />
+            ) : (
+              <FileExplorer
+                snapshotId={readySnapshot.id}
+                entries={files.data}
+                analysisReady={analysisReady}
+                selection={selection}
+                onSelectionChange={setSelection}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="symbols">
+            {analysisReady ? (
+              <SymbolsTable
+                snapshotId={readySnapshot.id}
+                onOpen={(path, startLine, endLine) =>
+                  openFile({ path, focus: { startLine, endLine, key: Date.now() } })
+                }
+              />
+            ) : (
+              <AnalysisPending status={readySnapshot.analysisStatus} />
+            )}
+          </TabsContent>
+          <TabsContent value="dependencies">
+            {analysisReady ? (
+              <DependencyOverview snapshotId={readySnapshot.id} onOpenFile={(path) => openFile({ path })} />
+            ) : (
+              <AnalysisPending status={readySnapshot.analysisStatus} />
+            )}
+          </TabsContent>
+        </Tabs>
+      )}
+    </>
+  )
+}

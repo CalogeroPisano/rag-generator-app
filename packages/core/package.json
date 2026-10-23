@@ -1,0 +1,16 @@
+{
+  "name": "@code-to-rag/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@code-to-rag/analysis": "workspace:*",
+    "effect": "4.0.5"
+  }
+}

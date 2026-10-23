@@ -1,0 +1,44 @@
+{
+  "name": "code-to-rag",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @code-to-rag/web dev",
+    "dev:worker": "pnpm --filter @code-to-rag/worker dev",
+    "build": "pnpm --filter @code-to-rag/web --filter @code-to-rag/worker build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "licenses:check": "node scripts/check-licenses.mjs",
+    "db:migrate": "pnpm --filter @code-to-rag/worker migrate",
+    "db:up": "docker compose up -d postgres",
+    "db:generate": "pnpm --filter @code-to-rag/db generate",
+    "licenses:report": "node scripts/check-licenses.mjs --all",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "db:test:create": "docker compose exec postgres createdb -U code_to_rag code_to_rag_test",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "effect": "4.0.5",
+    "eslint": "10.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
+    "prettier": "3.9.10",
+    "prettier-plugin-tailwindcss": "0.8.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
