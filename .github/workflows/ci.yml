@@ -27,10 +27,12 @@ jobs:
       TEST_DATABASE_URL: postgres://code_to_rag:ci-password@localhost:5432/code_to_rag_test
     steps:
       - uses: actions/checkout@v5
+      # pnpm must be on PATH before setup-node: it enables pnpm caching automatically from `packageManager`.
+      # The pnpm version comes from `packageManager` in package.json.
+      - uses: pnpm/action-setup@v6.1.0
       - uses: actions/setup-node@v5
         with:
           node-version: 24.22.1
-      - run: corepack enable
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Typecheck
