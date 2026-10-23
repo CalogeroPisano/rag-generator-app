@@ -150,10 +150,114 @@ The `user`, `session`, `account` and `verification` tables belong to Better Auth
 Rows read from the database are validated with the domain schemas (`packages/db/src/rows.ts`): an unexpected value
 produces an explicit error instead of flowing into the domain.
 
+### Model call log
+
+`model_call` (schema `public`) records every HTTP call to a model: job, snapshot, phase, task (prompt id), prompt
+version, provider, model, attempt (2 = correction request), outcome (`success | invalid_output | error | timeout`),
+duration, input/output tokens and a short error (error name and HTTP status). Prompts and answers are never stored:
+they contain code. The log survives the deletion of jobs and snapshots (references become null).
+
+`snapshot` also tracks the AI understanding: `understanding_status` (`pending | running | ready | failed`, null until
+requested), `understood_at`, `feature_count`, `card_count`.
+
+## The `rag` schema
+
+The knowledge produced by the AI understanding lives in its own Postgres schema, `rag`, kept apart from the
+application tables. It is **self-contained**: no foreign key points to `public`. Projects, snapshots and files are
+identified by copied ids, paths and revisions, so the schema can be read, exported or moved on its own. The
+application deletes the knowledge of a snapshot itself (`rag.snapshot` cascades to every other `rag` table).
+
+```mermaid
+erDiagram
+  rag_snapshot ||--o{ file_summary : ""
+  rag_snapshot ||--o{ symbol_summary : ""
+  rag_snapshot ||--o{ module_summary : ""
+  rag_snapshot ||--o{ feature : ""
+  feature ||--o| card : ""
+  card ||--o{ card_reference : ""
+
+  rag_snapshot {
+    uuid id PK "same id as public.snapshot (no FK)"
+    uuid project_id
+    text project_name
+    text source_type
+    text repository_url
+    text revision "commit sha or content hash"
+    text language "en"
+    text model
+  }
+  file_summary {
+    bigint id PK
+    uuid snapshot_id FK
+    text path
+    text language
+    text content_hash "of the masked content"
+    text summary
+    int parts "model calls it was built from"
+    int prompt_version
+    text model
+  }
+  symbol_summary {
+    bigint id PK
+    uuid snapshot_id FK
+    text path
+    text qualified_name
+    text kind
+    int start_line
+    int end_line
+    text summary
+  }
+  module_summary {
+    bigint id PK
+    uuid snapshot_id FK
+    text path "'' for the project root"
+    int depth
+    text summary
+    int file_count
+  }
+  feature {
+    uuid id PK
+    uuid snapshot_id FK
+    int position
+    text name
+    text description
+    text_array files
+    jsonb symbols "[{path, qualifiedName}]"
+  }
+  card {
+    uuid id PK
+    uuid snapshot_id FK
+    uuid feature_id FK "unique"
+    text status "generated | flagged | in_review | approved | excluded | needs_recheck"
+    text title
+    text summary
+    jsonb content "CardContent"
+    text source_revision
+    int version
+    int unreferenced_statements
+  }
+  card_reference {
+    bigint id PK
+    uuid card_id FK
+    text section
+    int item_index
+    text claim
+    text path
+    int start_line
+    int end_line
+  }
+```
+
+- **card.content** is the structured card (`CardContent` in `packages/ai/src/prompts/card.ts`): title, summary and the
+  sections `behavior`, `configuration`, `parameters`, `limits`, `validationRules`, `errors`; every item carries its
+  references. **card_reference** holds one row per cited range, for queries by file (phase 6).
+- `unreferenced_statements` counts statements left without a valid reference: phase 4 verification starts from them.
+- `prompt_version` and `model` are stored with every summary, feature and card.
+
 ## Tables of the next phases
 
-They will be added with new migrations in their phases: `feature`, `card`, `card_reference` (3),
-`correction` (4), `embedding`, `test_question`, `test_run` (5).
+They will be added with new migrations in their phases: `correction` (4), `embedding`, `test_question`, `test_run`
+(5).
 
 ## Migrations
 

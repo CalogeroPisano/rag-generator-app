@@ -36,6 +36,13 @@ The tree-sitter runtime and grammars ship as `.wasm` files next to the worker bu
 `web-tree-sitter` and the `tree-sitter-*` grammars) in `dist/third-party-licenses/grammars.json`, with their license
 files. The license check reads this inventory like the others.
 
+### AI SDK
+
+`ai`, `@ai-sdk/openai-compatible` and their `@ai-sdk/*` dependencies (including `@ai-sdk/gateway`, which `ai`
+imports but the product never uses) and `@vercel/oidc` are Apache-2.0; `zod` (a peer dependency of the AI SDK) and
+`eventsource-parser` are MIT. Their LICENSE files ship in `third-party-licenses/`. Models are not distributed: the
+license of the model deployed on premise is the operator's responsibility.
+
 ## Build tools
 
 Some tools used only at build time have licenses outside the list (for example lightningcss, MPL-2.0, used by

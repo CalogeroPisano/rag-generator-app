@@ -38,11 +38,13 @@ packages/core   domain (Effect): schemas, errors, config, ports (repository inte
 packages/db     Drizzle schema + migrations, repository implementations (Layers), LISTEN/NOTIFY listener
 packages/analysis  acquisition primitives (safe zip extraction, git clone, filters, languages, secret masking) and
                    static analysis (src/parsing: tree-sitter grammars, queries, extraction, import resolution)
-packages/ai     AI layer (phase 3; placeholder)
+packages/ai     AI layer: LanguageModel (AI SDK + OpenAI-compatible provider), AiConfig, ModelCallRecorder port,
+                versioned prompts + output schemas (src/prompts), scriptedLanguageModel for tests
 ```
 
-Dependency direction: `analysis` ← `core` ← `db` ← apps. `core` defines the repository **ports**
-(`ProjectRepository`, `SnapshotRepository`, `JobRepository`, `AnalysisRepository` in `core/src/ports.ts`); `db` implements them. Never
+Dependency direction: `analysis`, `ai` ← `core` ← `db` ← apps. `core` defines the repository **ports**
+(`ProjectRepository`, `SnapshotRepository`, `JobRepository`, `AnalysisRepository`, `UnderstandingRepository`,
+`KnowledgeRepository` in `core/src/ports.ts`; `ModelCallRecorder` in `ai`); `db` implements them. Never
 import `db` from `core`.
 
 ### Data flow (phase 1)
@@ -69,6 +71,25 @@ import `db` from `core`.
    `scripts/vite-plugin-grammars.mjs`), otherwise resolved from `node_modules`. Bump `ANALYZER_VERSION`
    (`analysis/src/parsing/model.ts`) when extraction or resolution rules change.
 
+### Data flow (phase 3: AI understanding)
+
+1. Manual: "Genera schede" → `startUnderstanding` → `requestUnderstanding` (needs analysis ready) queues an
+   `understanding` job. The web runtime only has `AiConfig` (to show whether `AI_MODEL` is set); only the worker calls
+   models.
+2. `understandingPipeline` (`core/src/understanding/pipeline.ts`): `prepare` (reset rag data) → `summarize-files`
+   (code without tests + config files; large files split by `splitIntoParts`, then rolled up) → `summarize-modules`
+   (`planModules`, bottom-up) → `map-features` (batched by token budget, `normalizeFeatures` / `mergeFeatures`) →
+   `generate-cards` (`buildCardExcerpts`, `checkReferences`) → `finalize`. Summary/card phases skip stored items
+   (resumable); an answer still invalid after the correction request skips the item.
+3. `LanguageModel.generateObject`: AI SDK `streamText` (always streamed: Node's fetch drops responses whose headers
+   take > 5 min, common on CPU) + `Output.object(jsonSchema(Schema.toJsonSchemaDocument))`, text parsed at the end,
+   `maxRetries: 0` (Effect retry with backoff instead), `Effect.timeout`, `Semaphore` for `AI_CONCURRENCY`, decode with
+   `Schema.toCodecJson`, one correction request, then `AiError(invalid_output)`. Every HTTP call → `ModelCallRecorder`
+   → `public.model_call` (metadata only).
+4. Output → schema **`rag`** (Drizzle `pgSchema("rag")`, `packages/db/src/schema/rag.ts`): self-contained, **no
+   foreign keys to `public`** (user's choice); the app deletes `rag.snapshot` rows itself (cascade inside `rag`).
+   Summaries and cards are always in English. Bump a prompt's `version` whenever its text or schema changes.
+
 ### Jobs and phases
 
 - A phase has a stable `name`, takes only the job, is **idempotent** (clears/overwrites what a previous attempt
@@ -86,6 +107,8 @@ import `db` from `core`.
   Unquoted `key = value` masking is limited to configuration-like languages (`configLanguages`): in code it would
   mask expressions (`password: z.string()`) and break parsing.
 - Findings record rule + line only, never the secret.
+- Models receive masked content only; prompts/answers are never logged or stored in `model_call` (errors: name +
+  HTTP status only). Never pass a string model id to the AI SDK (it would resolve through the Vercel AI Gateway).
 - Git tokens: encrypted at rest, passed to isomorphic-git only via `onAuth`, never in URLs, logs or errors.
 - Zip: paths sanitised (`sanitizeArchivePath` + `resolveInside`), symlinks never materialised, sizes enforced on
   inflated bytes (headers are not trusted).
@@ -135,9 +158,12 @@ of every new dependency before adding it.
 - Git via isomorphic-git (pure JS; no git binary in the images).
 - Web production server: srvx (bundled `serve.js`); Nitro 3 is still beta.
 - TypeScript 6.0.x (typescript-eslint does not support 6.1+ / 7 yet).
+- AI knowledge in a separate Postgres schema `rag`, self-contained (no FKs to `public`); cards/summaries in English;
+  understanding started manually as its own job. Dev model: Ollama `qwen3:4b-instruct` (CPU).
 
 ## Status
 
 - Phase 1 (foundations and acquisition): implemented.
 - Phase 2 (static analysis with tree-sitter: TS/JS, Java, C#, Go, Python): implemented.
-- Next: phase 3 (AI: summaries, feature map, cards).
+- Phase 3 (AI understanding: summaries, feature map, cards with line references, `rag` schema): implemented.
+- Next: phase 4 (verification and review).

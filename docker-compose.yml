@@ -15,6 +15,8 @@ x-app-env: &app-env
   ACQUISITION_MAX_FILE_MB: ${ACQUISITION_MAX_FILE_MB:-1}
   ACQUISITION_MAX_FILES: ${ACQUISITION_MAX_FILES:-50000}
   GIT_ALLOW_HTTP: ${GIT_ALLOW_HTTP:-false}
+  # AI model (OpenAI-compatible API). The web only reads AI_MODEL, to tell whether cards can be generated.
+  AI_MODEL: ${AI_MODEL:-}
 
 services:
   postgres:
@@ -67,6 +69,19 @@ services:
     environment:
       <<: *app-env
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434/v1}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-ollama}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_STRUCTURED_OUTPUTS: ${AI_STRUCTURED_OUTPUTS:-true}
+      AI_TIMEOUT: ${AI_TIMEOUT:-5 minutes}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
+      AI_CONCURRENCY: ${AI_CONCURRENCY:-2}
+      AI_CONTEXT_TOKENS: ${AI_CONTEXT_TOKENS:-16384}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-4096}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.1}
+    # Lets AI_BASE_URL point to an Ollama running on the host: http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Shared with web: uploads are written by web and read by the worker.
       - app-data:/data
@@ -77,6 +92,9 @@ services:
     image: ollama/ollama:0.40.7
     profiles: ["ollama"]
     restart: unless-stopped
+    environment:
+      # Ollama's default context window is small: it must cover AI_CONTEXT_TOKENS.
+      OLLAMA_CONTEXT_LENGTH: ${AI_CONTEXT_TOKENS:-16384}
     volumes:
       - ollama-data:/root/.ollama
 

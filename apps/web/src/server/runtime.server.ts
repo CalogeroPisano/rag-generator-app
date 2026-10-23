@@ -1,3 +1,4 @@
+import { AiConfig } from "@code-to-rag/ai"
 import { AppConfig, SecretBox } from "@code-to-rag/core"
 import { DatabaseLive, JobEventsListener } from "@code-to-rag/db"
 import { Config, Effect, Layer, Logger, ManagedRuntime } from "effect"
@@ -9,7 +10,8 @@ const LoggerLive = Layer.unwrap(
   })
 )
 
-const AppLive = Layer.mergeAll(AppConfig.layer, SecretBox.layer, JobEventsListener.layer).pipe(
+// AiConfig only: the web never calls models, it tells the UI whether the worker can.
+const AppLive = Layer.mergeAll(AppConfig.layer, AiConfig.layer, SecretBox.layer, JobEventsListener.layer).pipe(
   Layer.provideMerge(DatabaseLive),
   Layer.provideMerge(LoggerLive)
 )

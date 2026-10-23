@@ -11,12 +11,15 @@
     "migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts"
   },
   "dependencies": {
+    "@code-to-rag/ai": "workspace:*",
     "@code-to-rag/core": "workspace:*",
     "@code-to-rag/db": "workspace:*",
     "effect": "4.0.5"
   },
   "devDependencies": {
     "@code-to-rag/analysis": "workspace:*",
+    "ai": "7.0.150",
+    "drizzle-orm": "0.45.4",
     "fflate": "0.8.3",
     "vite": "8.3.5"
   }

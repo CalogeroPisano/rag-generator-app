@@ -59,6 +59,11 @@ export const snapshot = pgTable(
     analyzedAt: timestamp("analyzed_at", { withTimezone: true }),
     symbolCount: integer("symbol_count").notNull().default(0),
     dependencyCount: integer("dependency_count").notNull().default(0),
+    /** AI understanding: null until a job has been queued. Its output lives in the `rag` schema. */
+    understandingStatus: text("understanding_status"),
+    understoodAt: timestamp("understood_at", { withTimezone: true }),
+    featureCount: integer("feature_count").notNull().default(0),
+    cardCount: integer("card_count").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt()
   },
@@ -68,6 +73,10 @@ export const snapshot = pgTable(
     check(
       "snapshot_analysis_status_check",
       sql`${table.analysisStatus} is null or ${table.analysisStatus} in ('pending', 'running', 'ready', 'failed')`
+    ),
+    check(
+      "snapshot_understanding_status_check",
+      sql`${table.understandingStatus} is null or ${table.understandingStatus} in ('pending', 'running', 'ready', 'failed')`
     )
   ]
 )
@@ -240,4 +249,35 @@ export const jobEvent = pgTable(
     createdAt: createdAt()
   },
   (table) => [index("job_event_job_idx").on(table.jobId, table.id)]
+)
+
+/**
+ * Log of every model call: metadata only (phase, model, duration, tokens,
+ * outcome). Prompts and answers are never stored here: they contain code.
+ */
+export const modelCall = pgTable(
+  "model_call",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    jobId: uuid("job_id").references(() => job.id, { onDelete: "set null" }),
+    // The log outlives deleted jobs and snapshots (audit): references become null.
+    snapshotId: uuid("snapshot_id").references(() => snapshot.id, { onDelete: "set null" }),
+    phase: text("phase").notNull(),
+    task: text("task").notNull(),
+    promptVersion: integer("prompt_version").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    attempt: integer("attempt").notNull(),
+    outcome: text("outcome").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    error: text("error"),
+    createdAt: createdAt()
+  },
+  (table) => [
+    index("model_call_snapshot_idx").on(table.snapshotId, table.createdAt),
+    index("model_call_job_idx").on(table.jobId),
+    check("model_call_outcome_check", sql`${table.outcome} in ('success', 'invalid_output', 'error', 'timeout')`)
+  ]
 )

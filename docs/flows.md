@@ -158,6 +158,42 @@ Targets keep the granularity of the language (no invented file-level edges):
 | Go       | Module path from `go.mod` → package `directory`; other paths → `external`.                                                                                                                          |
 | Python   | Relative imports from the file's package; absolute imports from the project roots (`module.py`, `module/__init__.py`); otherwise `external`.                                                        |
 
+## AI understanding
+
+Started manually from the project page ("Genera schede", available when the static analysis is ready and `AI_MODEL`
+is set): `requestUnderstanding` queues an `understanding` job (or returns the one already queued or running). It reads
+only masked contents and the static analysis, and writes only to the `rag` schema.
+
+```mermaid
+flowchart LR
+  prepare["prepare<br/>reset rag data"] --> files["summarize-files<br/>declarations + file"]
+  files --> modules["summarize-modules<br/>bottom-up"] --> map["map-features<br/>features + files"]
+  map --> cards["generate-cards<br/>one per feature"] --> finalize["finalize<br/>counts, ready"]
+```
+
+| Phase               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare`           | Fails at once (not retried) if no model is configured. Sets `understanding_status = running`, deletes the snapshot's `rag` data and records its identity in `rag.snapshot` (project, revision, model, language).                                                                                                                                                                                                              |
+| `summarize-files`   | Application code (the analyzed languages, without tests) and configuration files (`application*.properties`, `appsettings*.json`, `config/*`…). One call per file with numbered lines and its declarations: file summary plus a sentence per relevant declaration. Files larger than the context are split at declaration boundaries and summarized in parts, then rolled up. Resumable: stored summaries are not recomputed. |
+| `summarize-modules` | Directories bottom-up, from the summaries of their files and sub-modules; pass-through directories (one child, no files) are skipped. The root module is the project overview.                                                                                                                                                                                                                                                |
+| `map-features`      | The model lists the user-level features with their files and declarations, from the module overview and one line per file. Large projects are mapped in batches, then the candidates are merged. Paths and declarations that do not exist are dropped.                                                                                                                                                                        |
+| `generate-cards`    | For each feature, the files are read together: whole when they fit, otherwise the declarations of the feature with some context, then the first lines of the other files, then summaries only. The card cites path and lines for every statement; references outside the lines shown are dropped and statements left without one are counted. Resumable per card.                                                             |
+| `finalize`          | Counts features and cards, `understanding_status = ready`.                                                                                                                                                                                                                                                                                                                                                                    |
+
+- **Streaming**: answers are always streamed and parsed at the end. A non-streamed call to a slow local model would
+  hit the 5-minute limit Node's `fetch` puts on waiting for response headers; with streaming only `AI_TIMEOUT` applies.
+- **Budget**: every prompt is sized from `AI_CONTEXT_TOKENS - AI_MAX_OUTPUT_TOKENS` (conservative estimate of 3
+  characters per token).
+- **Invalid answers**: the answer is validated with the Effect schema of the prompt; if it does not match, the model
+  gets its answer back with the validation problems once; a second invalid answer skips that file, module or card
+  (counted in the progress message) instead of failing the job.
+- **Transient errors** (network, 408/429/5xx, timeout) are retried by the AI layer (`AI_MAX_RETRIES`, exponential
+  backoff), then by the job runner from the failed phase; configuration errors (missing model, 4xx) fail at once.
+- **Prompts are versioned** (`packages/ai/src/prompts/*`): the version is stored with every result and in the call
+  log. Changing a prompt means bumping its version.
+- Requesting the understanding again starts from scratch for that snapshot (phase 6 will reuse unchanged summaries,
+  keyed by content hash).
+
 ## Real-time progress
 
 ```mermaid

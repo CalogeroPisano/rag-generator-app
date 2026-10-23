@@ -1,3 +1,4 @@
+import { CardContent } from "@code-to-rag/ai"
 import { ExclusionReason, ImportKind, SymbolKind } from "@code-to-rag/analysis"
 import { Schema } from "effect"
 
@@ -27,6 +28,9 @@ export type SnapshotStatus = typeof SnapshotStatus.Type
 export const AnalysisStatus = Schema.Literals(["pending", "running", "ready", "failed"])
 export type AnalysisStatus = typeof AnalysisStatus.Type
 
+export const UnderstandingStatus = Schema.Literals(["pending", "running", "ready", "failed"])
+export type UnderstandingStatus = typeof UnderstandingStatus.Type
+
 export class Project extends Schema.Class<Project>("Project")({
   id: ProjectId,
   name: Schema.String,
@@ -54,6 +58,11 @@ export class Snapshot extends Schema.Class<Snapshot>("Snapshot")({
   analyzedAt: Schema.NullOr(Schema.Date),
   symbolCount: Schema.Int,
   dependencyCount: Schema.Int,
+  /** AI understanding; null until an understanding job has been queued. */
+  understandingStatus: Schema.NullOr(UnderstandingStatus),
+  understoodAt: Schema.NullOr(Schema.Date),
+  featureCount: Schema.Int,
+  cardCount: Schema.Int,
   createdAt: Schema.Date
 }) {}
 
@@ -148,9 +157,90 @@ export class DependencyOverview extends Schema.Class<DependencyOverview>("Depend
   languages: Schema.Array(Schema.Struct({ language: Schema.String, files: Schema.Int, symbols: Schema.Int }))
 }) {}
 
+// ── AI understanding (stored in the `rag` schema) ──────────────────────────
+
+export const CardStatus = Schema.Literals([
+  "generated",
+  "flagged",
+  "in_review",
+  "approved",
+  "excluded",
+  "needs_recheck"
+])
+export type CardStatus = typeof CardStatus.Type
+
+export const FeatureSymbol = Schema.Struct({ path: Schema.String, qualifiedName: Schema.String })
+export type FeatureSymbol = typeof FeatureSymbol.Type
+
+export class CardInfo extends Schema.Class<CardInfo>("CardInfo")({
+  id: Schema.String,
+  status: CardStatus,
+  title: Schema.String,
+  unreferencedStatements: Schema.Int
+}) {}
+
+export class FeatureEntry extends Schema.Class<FeatureEntry>("FeatureEntry")({
+  id: Schema.String,
+  position: Schema.Int,
+  name: Schema.String,
+  description: Schema.String,
+  files: Schema.Array(Schema.String),
+  symbols: Schema.Array(FeatureSymbol),
+  card: Schema.NullOr(CardInfo)
+}) {}
+
+export class FeatureMap extends Schema.Class<FeatureMap>("FeatureMap")({
+  /** Summary of the project root module. */
+  projectSummary: Schema.NullOr(Schema.String),
+  features: Schema.Array(FeatureEntry)
+}) {}
+
+export class CardView extends Schema.Class<CardView>("CardView")({
+  id: Schema.String,
+  featureId: Schema.String,
+  featureName: Schema.String,
+  status: CardStatus,
+  content: CardContent,
+  sourceRevision: Schema.String,
+  version: Schema.Int,
+  unreferencedStatements: Schema.Int,
+  model: Schema.String,
+  createdAt: Schema.Date
+}) {}
+
+export class SymbolSummaryEntry extends Schema.Class<SymbolSummaryEntry>("SymbolSummaryEntry")({
+  qualifiedName: Schema.String,
+  kind: Schema.String,
+  startLine: Schema.Int,
+  endLine: Schema.Int,
+  summary: Schema.String
+}) {}
+
+export class FileSummaryView extends Schema.Class<FileSummaryView>("FileSummaryView")({
+  path: Schema.String,
+  summary: Schema.String,
+  model: Schema.String,
+  symbols: Schema.Array(SymbolSummaryEntry)
+}) {}
+
+export const ModelCallTotals = Schema.Struct({
+  calls: Schema.Int,
+  failures: Schema.Int,
+  inputTokens: Schema.Int,
+  outputTokens: Schema.Int,
+  durationMs: Schema.Int
+})
+export type ModelCallTotals = typeof ModelCallTotals.Type
+
+export class ModelCallStats extends Schema.Class<ModelCallStats>("ModelCallStats")({
+  total: ModelCallTotals,
+  byTask: Schema.Array(Schema.Struct({ task: Schema.String, ...ModelCallTotals.fields })),
+  models: Schema.Array(Schema.String)
+}) {}
+
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
-export const JobType = Schema.Literals(["acquisition", "analysis"])
+export const JobType = Schema.Literals(["acquisition", "analysis", "understanding"])
 export type JobType = typeof JobType.Type
 
 export const JobStatus = Schema.Literals(["queued", "running", "succeeded", "failed", "cancelled"])

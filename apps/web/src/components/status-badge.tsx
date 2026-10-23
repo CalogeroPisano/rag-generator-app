@@ -66,3 +66,44 @@ export function AnalysisStatusBadge({ status }: { status: AnalysisStatus }) {
     </Badge>
   )
 }
+
+type UnderstandingStatus = "pending" | "running" | "ready" | "failed"
+
+const understandingStatus: Record<
+  UnderstandingStatus,
+  { label: string; variant: "info" | "success" | "destructive" | "secondary" }
+> = {
+  pending: { label: "Comprensione in coda", variant: "secondary" },
+  running: { label: "Comprensione in corso", variant: "info" },
+  ready: { label: "Schede generate", variant: "success" },
+  failed: { label: "Comprensione fallita", variant: "destructive" }
+}
+
+export function UnderstandingStatusBadge({ status }: { status: UnderstandingStatus }) {
+  const { label, variant } = understandingStatus[status]
+  return (
+    <Badge variant={variant}>
+      {status === "running" && <Spinner data-icon="inline-start" />}
+      {label}
+    </Badge>
+  )
+}
+
+type CardStatus = "generated" | "flagged" | "in_review" | "approved" | "excluded" | "needs_recheck"
+
+const cardStatus: Record<
+  CardStatus,
+  { label: string; variant: "info" | "success" | "destructive" | "secondary" | "warning" }
+> = {
+  generated: { label: "Generata", variant: "info" },
+  flagged: { label: "Da verificare", variant: "warning" },
+  in_review: { label: "In revisione", variant: "info" },
+  approved: { label: "Approvata", variant: "success" },
+  excluded: { label: "Esclusa", variant: "secondary" },
+  needs_recheck: { label: "Da riverificare", variant: "warning" }
+}
+
+export function CardStatusBadge({ status }: { status: CardStatus }) {
+  const { label, variant } = cardStatus[status]
+  return <Badge variant={variant}>{label}</Badge>
+}

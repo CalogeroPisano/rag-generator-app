@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@code-to-rag/ai": "workspace:*",
     "@code-to-rag/analysis": "workspace:*",
     "@code-to-rag/core": "workspace:*",
     "@code-to-rag/db": "workspace:*",

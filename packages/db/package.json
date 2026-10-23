@@ -12,6 +12,7 @@
     "generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@code-to-rag/ai": "workspace:*",
     "@code-to-rag/analysis": "workspace:*",
     "@code-to-rag/core": "workspace:*",
     "drizzle-orm": "0.45.4",

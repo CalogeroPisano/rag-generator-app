@@ -9,7 +9,7 @@ export interface JobProgressWire {
 
 export interface JobStateWire {
   readonly id: string
-  readonly type: "acquisition" | "analysis"
+  readonly type: "acquisition" | "analysis" | "understanding"
   readonly status: "queued" | "running" | "succeeded" | "failed" | "cancelled"
   readonly currentPhase: string | null
   readonly completedPhases: ReadonlyArray<string>

@@ -1,2 +1,9 @@
-// AI layer (AI SDK client as an Effect Layer, versioned prompts): implemented in phase 3.
-export {}
+export * from "./config.ts"
+export * from "./errors.ts"
+export * from "./language-model.ts"
+export * from "./model-call.ts"
+export * from "./prompts/card.ts"
+export * from "./prompts/features.ts"
+export * from "./prompts/format.ts"
+export * from "./prompts/summaries.ts"
+export * from "./testing.ts"

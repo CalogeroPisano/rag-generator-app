@@ -4,7 +4,8 @@
 
 - Docker Engine with the Compose plugin (v2).
 - Indicative resources: 2 CPUs, 4 GB of RAM, disk space for the database and the uploaded archives. Local models
-  (Ollama, phase 3) need additional resources, ideally a GPU.
+  (Ollama) need additional resources, ideally a GPU: on CPU only, small models work but the understanding of a
+  project takes hours.
 
 ## Start
 
@@ -16,13 +17,13 @@ docker compose up -d --build
 
 Services:
 
-| Service    | Role                                                          |
-| ---------- | ------------------------------------------------------------- |
-| `postgres` | PostgreSQL 17 + pgvector (data in the `postgres-data` volume) |
-| `migrate`  | Applies the migrations and exits                              |
-| `web`      | Interface and API, port `WEB_PORT` (default 3000)             |
-| `worker`   | Job execution                                                 |
-| `ollama`   | Optional: `docker compose --profile ollama up -d`             |
+| Service    | Role                                                           |
+| ---------- | -------------------------------------------------------------- |
+| `postgres` | PostgreSQL 17 + pgvector (data in the `postgres-data` volume)  |
+| `migrate`  | Applies the migrations and exits                               |
+| `web`      | Interface and API, port `WEB_PORT` (default 3000)              |
+| `worker`   | Job execution                                                  |
+| `ollama`   | Optional local models: `docker compose --profile ollama up -d` |
 
 `web` and `worker` share the `app-data` volume mounted on `/data`.
 
@@ -50,6 +51,45 @@ To scale processing, start more workers: `docker compose up -d --scale worker=3`
 | `JOB_MAX_ATTEMPTS`              | `3`                     | Attempts per job                                                                       |
 | `LOG_FORMAT`                    | `json`                  | `json` or `pretty`                                                                     |
 | `GRAMMARS_DIR`                  | set in the worker image | Directory of the tree-sitter `.wasm` files (development: resolved from `node_modules`) |
+
+## AI model
+
+The AI understanding ("Genera schede") calls a chat model through an OpenAI-compatible API: the bundled Ollama, an
+Ollama on the host, vLLM or any compatible server. The model must support JSON-schema constrained output
+(`response_format`), as Ollama and vLLM do; otherwise set `AI_STRUCTURED_OUTPUTS=false`.
+
+| Variable                | Default (worker)         | Description                                                                 |
+| ----------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| `AI_MODEL`              | —                        | Model id; without it the understanding is disabled                          |
+| `AI_BASE_URL`           | `http://ollama:11434/v1` | Endpoint (`http://host.docker.internal:11434/v1` for an Ollama on the host) |
+| `AI_PROVIDER_NAME`      | `ollama`                 | Name recorded in the call log                                               |
+| `AI_API_KEY`            | —                        | Bearer key, if the endpoint requires one                                    |
+| `AI_STRUCTURED_OUTPUTS` | `true`                   | Send the JSON schema as `response_format`                                   |
+| `AI_TIMEOUT`            | `5 minutes`              | Timeout of one call                                                         |
+| `AI_MAX_RETRIES`        | `2`                      | Retries on transient errors (network, 408/429/5xx, timeout)                 |
+| `AI_CONCURRENCY`        | `2`                      | Parallel calls per worker                                                   |
+| `AI_CONTEXT_TOKENS`     | `16384`                  | Context window: prompts are sized to fit it                                 |
+| `AI_MAX_OUTPUT_TOKENS`  | `4096`                   | Maximum answer length                                                       |
+| `AI_TEMPERATURE`        | `0.1`                    | Sampling temperature                                                        |
+
+With the bundled Ollama:
+
+```bash
+docker compose --profile ollama up -d
+docker compose exec ollama ollama pull qwen3:4b-instruct   # or a larger model if you have a GPU
+# .env: AI_MODEL=qwen3:4b-instruct, then: docker compose up -d
+```
+
+Indicative speed on CPU only (4 threads, `qwen3:4b-instruct`): about 1.5 output tokens per second with long prompts;
+a card can take 20–30 minutes, so raise `AI_TIMEOUT` accordingly. With a GPU the same calls take seconds.
+
+Ollama's context window defaults to a few thousand tokens: the compose file sets `OLLAMA_CONTEXT_LENGTH` to
+`AI_CONTEXT_TOKENS`. For an Ollama outside compose, set the same variable there (or create a model with
+`PARAMETER num_ctx`). Check the license of the model you deploy: models are not part of the product.
+
+An Ollama on the host listens on `127.0.0.1` by default: to reach it from the worker container
+(`AI_BASE_URL=http://host.docker.internal:11434/v1`) it must listen on the Docker bridge too (`OLLAMA_HOST=0.0.0.0`,
+protected by the host firewall).
 
 ## Reverse proxy
 

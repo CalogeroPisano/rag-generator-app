@@ -7,9 +7,9 @@ a vector database that powers a RAG chatbot.
 
 Commercially distributable product, installed **on premise** with Docker Compose.
 
-> **Status:** phases 1–2 of 6 completed (source acquisition, static analysis). See [Roadmap](#roadmap).
+> **Status:** phases 1–3 of 6 completed (source acquisition, static analysis, AI understanding). See [Roadmap](#roadmap).
 
-## Available features (phases 1–2)
+## Available features (phases 1–3)
 
 - **Acquisition** from a zip archive (streamed upload) or a Git repository, including private ones with a read-only
   token (stored encrypted).
@@ -24,8 +24,15 @@ Commercially distributable product, installed **on premise** with Docker Compose
   functions, methods, constants…) with lines, signature, documentation and visibility; imports resolved to files,
   packages/directories, namespaces or external libraries. It starts automatically after the acquisition and can be
   re-run.
+- **AI understanding** (started on demand, "Genera schede"): bottom-up summaries (declarations → files → modules),
+  feature map with the files and declarations involved, one **functional card** per feature written by reading all
+  its files together. Every statement of a card cites the source lines it comes from; references are checked against
+  the code shown to the model. Works with any OpenAI-compatible endpoint (Ollama, vLLM), never the Vercel AI
+  Gateway. Summaries and cards are written in English and stored in a separate Postgres schema, `rag`.
+- **Model call log**: phase, model, duration, tokens and outcome of every call, never the code.
 - **Web interface**: login, project list, new project, job progress, file tree with exclusions, code viewer
-  (Monaco) with file outline and dependencies, symbol search, dependency overview, light and dark theme.
+  (Monaco) with file outline, dependencies and AI summary, symbol search, dependency overview, features and cards with
+  clickable source references, model call statistics, light and dark theme.
 
 ## Quick start (Docker)
 
@@ -41,7 +48,9 @@ docker compose up -d --build
 Open http://localhost:3000: the first account created is the administrator. Further sign-ups are disabled unless
 `AUTH_ALLOW_SIGNUP=true`.
 
-To include Ollama (local models, used from phase 3): `docker compose --profile ollama up -d`.
+AI understanding needs a model: set `AI_MODEL` (and `AI_BASE_URL` if the model is not served by the bundled Ollama).
+With the bundled Ollama: `docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull <model>`.
+See [Installation](docs/installation.md#ai-model).
 
 ## Local development
 
@@ -80,15 +89,15 @@ packages/
   core/       domain (Effect): schemas, errors, configuration, ports, pipeline, use cases
   db/         Drizzle schema, migrations, repositories, LISTEN/NOTIFY listener
   analysis/   acquisition (zip, Git, filters, languages, credential masking) and tree-sitter parsing
-  ai/         AI layer (phase 3)
+  ai/         AI layer: AI SDK client (retry, timeout, concurrency, validation), call log port, versioned prompts
 docs/         architecture and flow documentation
 ```
 
 ## Documentation
 
 - [Architecture](docs/architecture.md): components, packages, technologies, decisions
-- [Flows](docs/flows.md): acquisition, static analysis, jobs and phases, real-time progress, authentication
-- [Data model](docs/data-model.md): tables and relationships
+- [Flows](docs/flows.md): acquisition, static analysis, AI understanding, jobs and phases, progress, authentication
+- [Data model](docs/data-model.md): application tables and the `rag` schema
 - [Security](docs/security.md): masking, extraction, tokens, web protections
 - [Installation and configuration](docs/installation.md): Docker Compose, environment variables, operations
 - [Licenses](docs/licenses.md): dependency policy and automated check
@@ -97,7 +106,7 @@ docs/         architecture and flow documentation
 
 1. **Foundations and acquisition** — completed
 2. **Static analysis with tree-sitter**: symbols and dependencies between files — completed
-3. AI understanding: summaries, feature map, card generation with line references
+3. **AI understanding**: summaries, feature map, card generation with line references — completed
 4. Automated verification and assisted review
 5. Indexing in pgvector, RAG chat with citations, test questions
 6. Incremental updates on new versions of the code

@@ -19,7 +19,9 @@ const assertTestDatabase = (url: string) => {
 /** Drops everything and re-applies the migrations. */
 export const resetDatabase = Database.use(({ db }) =>
   query("test.reset", () =>
-    db.execute(sql`drop schema if exists public cascade; drop schema if exists drizzle cascade; create schema public;`)
+    db.execute(
+      sql`drop schema if exists rag cascade; drop schema if exists public cascade; drop schema if exists drizzle cascade; create schema public;`
+    )
   )
 ).pipe(Effect.andThen(runMigrations()))
 

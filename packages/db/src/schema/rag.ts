@@ -1,0 +1,181 @@
+/**
+ * Knowledge derived by the AI understanding, in its own Postgres schema `rag`.
+ *
+ * The schema is self-contained: it has no foreign keys to the application
+ * tables (`public`). Projects, snapshots and files are identified by copied
+ * ids, paths and revisions, so that the knowledge base can be read, exported or
+ * moved on its own. The application deletes the rows of a snapshot itself
+ * (`rag.snapshot` cascades to everything else).
+ */
+import { sql } from "drizzle-orm"
+import {
+  bigserial,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid
+} from "drizzle-orm/pg-core"
+
+export const rag = pgSchema("rag")
+
+const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+
+/** One analyzed version of a project: the root of everything else in `rag`. */
+export const ragSnapshot = rag.table(
+  "snapshot",
+  {
+    /** Same id as the application snapshot (`public.snapshot.id`), not a foreign key. */
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id").notNull(),
+    projectName: text("project_name").notNull(),
+    sourceType: text("source_type").notNull(),
+    repositoryUrl: text("repository_url"),
+    /** Commit sha (Git) or content hash (zip) of the analyzed code. */
+    revision: text("revision").notNull(),
+    /** Language of summaries and cards. */
+    language: text("language").notNull(),
+    model: text("model").notNull(),
+    createdAt: createdAt()
+  },
+  (table) => [index("rag_snapshot_project_idx").on(table.projectId)]
+)
+
+const snapshotId = () =>
+  uuid("snapshot_id")
+    .notNull()
+    .references(() => ragSnapshot.id, { onDelete: "cascade" })
+
+export const fileSummary = rag.table(
+  "file_summary",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    snapshotId: snapshotId(),
+    path: text("path").notNull(),
+    language: text("language").notNull(),
+    /** Hash of the masked content that was summarized (reuse on unchanged files, phase 6). */
+    contentHash: text("content_hash").notNull(),
+    summary: text("summary").notNull(),
+    /** Number of model calls (parts) the summary was built from. */
+    parts: integer("parts").notNull(),
+    promptVersion: integer("prompt_version").notNull(),
+    model: text("model").notNull(),
+    createdAt: createdAt()
+  },
+  (table) => [uniqueIndex("rag_file_summary_path_idx").on(table.snapshotId, table.path)]
+)
+
+export const symbolSummary = rag.table(
+  "symbol_summary",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    snapshotId: snapshotId(),
+    path: text("path").notNull(),
+    qualifiedName: text("qualified_name").notNull(),
+    kind: text("kind").notNull(),
+    startLine: integer("start_line").notNull(),
+    endLine: integer("end_line").notNull(),
+    summary: text("summary").notNull()
+  },
+  (table) => [index("rag_symbol_summary_path_idx").on(table.snapshotId, table.path)]
+)
+
+/** Summary of a directory, built from its files and sub-directories. `path` is "" for the project root. */
+export const moduleSummary = rag.table(
+  "module_summary",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    snapshotId: snapshotId(),
+    path: text("path").notNull(),
+    depth: integer("depth").notNull(),
+    summary: text("summary").notNull(),
+    fileCount: integer("file_count").notNull(),
+    promptVersion: integer("prompt_version").notNull(),
+    model: text("model").notNull(),
+    createdAt: createdAt()
+  },
+  (table) => [uniqueIndex("rag_module_summary_path_idx").on(table.snapshotId, table.path)]
+)
+
+export const feature = rag.table(
+  "feature",
+  {
+    id: uuid("id").primaryKey(),
+    snapshotId: snapshotId(),
+    position: integer("position").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    files: text("files")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Involved declarations: `[{ path, qualifiedName }]`. */
+    symbols: jsonb("symbols").$type<Array<{ path: string; qualifiedName: string }>>().notNull().default([]),
+    promptVersion: integer("prompt_version").notNull(),
+    model: text("model").notNull(),
+    createdAt: createdAt()
+  },
+  (table) => [index("rag_feature_snapshot_idx").on(table.snapshotId, table.position)]
+)
+
+export const card = rag.table(
+  "card",
+  {
+    id: uuid("id").primaryKey(),
+    snapshotId: snapshotId(),
+    featureId: uuid("feature_id")
+      .notNull()
+      .references(() => feature.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    /** Structured content (`CardContent`), references already checked against the files. */
+    content: jsonb("content").notNull(),
+    /** Revision of the code the card was generated from. */
+    sourceRevision: text("source_revision").notNull(),
+    version: integer("version").notNull().default(1),
+    /** Statements without any valid reference (candidates for verification). */
+    unreferencedStatements: integer("unreferenced_statements").notNull().default(0),
+    promptVersion: integer("prompt_version").notNull(),
+    model: text("model").notNull(),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date())
+  },
+  (table) => [
+    uniqueIndex("rag_card_feature_idx").on(table.featureId),
+    index("rag_card_snapshot_idx").on(table.snapshotId),
+    check(
+      "rag_card_status_check",
+      sql`${table.status} in ('generated', 'flagged', 'in_review', 'approved', 'excluded', 'needs_recheck')`
+    )
+  ]
+)
+
+/** One cited source range of a card statement. */
+export const cardReference = rag.table(
+  "card_reference",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    cardId: uuid("card_id")
+      .notNull()
+      .references(() => card.id, { onDelete: "cascade" }),
+    section: text("section").notNull(),
+    /** Position of the statement in its section. */
+    itemIndex: integer("item_index").notNull(),
+    claim: text("claim").notNull(),
+    path: text("path").notNull(),
+    startLine: integer("start_line").notNull(),
+    endLine: integer("end_line").notNull()
+  },
+  (table) => [
+    index("rag_card_reference_card_idx").on(table.cardId),
+    index("rag_card_reference_path_idx").on(table.path)
+  ]
+)

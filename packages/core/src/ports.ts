@@ -3,9 +3,16 @@
  * and the pipeline only depend on these interfaces.
  */
 import type { CodeSymbol, DependencyTarget, PreparedFile, RawImport, ResolverInput } from "@code-to-rag/analysis"
+import type { CardContent } from "@code-to-rag/ai"
 import { Context, type Effect, type Option } from "effect"
 import type {
   AnalysisStatus,
+  CardStatus,
+  CardView,
+  FeatureMap,
+  FeatureSymbol,
+  FileSummaryView,
+  ModelCallStats,
   DependencyOverview,
   FileAnalysisView,
   Job,
@@ -21,6 +28,7 @@ import type {
   SourceFileEntry,
   SourceType,
   SymbolPage,
+  UnderstandingStatus,
   UploadId,
   UserId
 } from "./domain.ts"
@@ -183,3 +191,140 @@ export class AnalysisRepository extends Context.Service<
     overview(id: SnapshotId): Effect.Effect<DependencyOverview, DatabaseError>
   }
 >()("code-to-rag/core/AnalysisRepository") {}
+
+// ── AI understanding ────────────────────────────────────────────────────────
+
+/** A declaration found by static analysis, as used by the understanding. */
+export interface Declaration {
+  readonly path: string
+  readonly kind: string
+  readonly qualifiedName: string
+  readonly container: string | null
+  readonly exported: boolean
+  readonly startLine: number
+  readonly endLine: number
+}
+
+/** A file read by the understanding: masked content only. */
+export interface FileForUnderstanding {
+  readonly path: string
+  readonly language: string
+  readonly contentHash: string
+  readonly content: string
+}
+
+/** Identity of the analyzed code, copied into the `rag` schema. */
+export interface KnowledgeSnapshotInfo {
+  readonly snapshotId: SnapshotId
+  readonly projectId: ProjectId
+  readonly projectName: string
+  readonly sourceType: SourceType
+  readonly repositoryUrl: string | null
+  readonly revision: string
+}
+
+/** Application side of the understanding (`public` schema): inputs and status. */
+export class UnderstandingRepository extends Context.Service<
+  UnderstandingRepository,
+  {
+    setStatus(id: SnapshotId, status: UnderstandingStatus): Effect.Effect<void, DatabaseError>
+    /** Stores the counts and marks the understanding ready. */
+    complete(
+      id: SnapshotId,
+      counts: { readonly features: number; readonly cards: number }
+    ): Effect.Effect<void, DatabaseError>
+    snapshotInfo(id: SnapshotId): Effect.Effect<KnowledgeSnapshotInfo, NotFoundError | DatabaseError>
+    loadFiles(
+      id: SnapshotId,
+      paths: ReadonlyArray<string>
+    ): Effect.Effect<ReadonlyArray<FileForUnderstanding>, DatabaseError>
+    declarations(id: SnapshotId): Effect.Effect<ReadonlyArray<Declaration>, DatabaseError>
+    modelCallStats(id: SnapshotId): Effect.Effect<ModelCallStats, DatabaseError>
+  }
+>()("code-to-rag/core/UnderstandingRepository") {}
+
+export interface NewFileSummary {
+  readonly path: string
+  readonly language: string
+  readonly contentHash: string
+  readonly summary: string
+  readonly parts: number
+  readonly symbols: ReadonlyArray<{
+    readonly qualifiedName: string
+    readonly kind: string
+    readonly startLine: number
+    readonly endLine: number
+    readonly summary: string
+  }>
+}
+
+export interface StoredSummary {
+  readonly path: string
+  readonly summary: string
+}
+
+export interface NewFeature {
+  readonly name: string
+  readonly description: string
+  readonly files: ReadonlyArray<string>
+  readonly symbols: ReadonlyArray<FeatureSymbol>
+}
+
+export interface NewCardReference {
+  readonly section: string
+  readonly itemIndex: number
+  readonly claim: string
+  readonly path: string
+  readonly startLine: number
+  readonly endLine: number
+}
+
+export interface NewCard {
+  readonly featureId: string
+  readonly status: CardStatus
+  readonly content: CardContent
+  readonly sourceRevision: string
+  readonly unreferencedStatements: number
+  readonly references: ReadonlyArray<NewCardReference>
+}
+
+/** Who produced an artifact: recorded with summaries, features and cards. */
+export interface Provenance {
+  readonly model: string
+  readonly promptVersion: number
+}
+
+/** Knowledge base produced by the understanding (`rag` schema, no links to `public`). */
+export class KnowledgeRepository extends Context.Service<
+  KnowledgeRepository,
+  {
+    /** Deletes everything stored for the snapshot and records its identity again. */
+    reset(
+      info: KnowledgeSnapshotInfo,
+      meta: { readonly language: string; readonly model: string }
+    ): Effect.Effect<void, DatabaseError>
+    fileSummaries(id: SnapshotId): Effect.Effect<ReadonlyArray<StoredSummary>, DatabaseError>
+    /** Replaces the summary of one file (and of its symbols). */
+    saveFileSummary(id: SnapshotId, summary: NewFileSummary, provenance: Provenance): Effect.Effect<void, DatabaseError>
+    moduleSummaries(id: SnapshotId): Effect.Effect<ReadonlyArray<StoredSummary>, DatabaseError>
+    saveModuleSummary(
+      id: SnapshotId,
+      module: { readonly path: string; readonly depth: number; readonly summary: string; readonly fileCount: number },
+      provenance: Provenance
+    ): Effect.Effect<void, DatabaseError>
+    /** Replaces the feature map (and therefore deletes the cards). */
+    replaceFeatures(
+      id: SnapshotId,
+      features: ReadonlyArray<NewFeature>,
+      provenance: Provenance
+    ): Effect.Effect<void, DatabaseError>
+    featureMap(id: SnapshotId): Effect.Effect<FeatureMap, DatabaseError>
+    /** Replaces the card of a feature. */
+    saveCard(id: SnapshotId, card: NewCard, provenance: Provenance): Effect.Effect<void, DatabaseError>
+    getCard(id: SnapshotId, cardId: string): Effect.Effect<CardView, NotFoundError | DatabaseError>
+    fileSummary(id: SnapshotId, path: string): Effect.Effect<Option.Option<FileSummaryView>, DatabaseError>
+    counts(id: SnapshotId): Effect.Effect<{ readonly features: number; readonly cards: number }, DatabaseError>
+    /** Removes the knowledge of the given snapshots (the application deletes it itself: no foreign keys). */
+    deleteSnapshots(ids: ReadonlyArray<SnapshotId>): Effect.Effect<void, DatabaseError>
+  }
+>()("code-to-rag/core/KnowledgeRepository") {}

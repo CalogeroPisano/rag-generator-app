@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@code-to-rag/ai": "workspace:*",
     "@code-to-rag/analysis": "workspace:*",
     "effect": "4.0.5"
   }

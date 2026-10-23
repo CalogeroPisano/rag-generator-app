@@ -4,6 +4,7 @@ import { ChevronRightIcon, FileIcon, FolderIcon, FolderXIcon, SearchIcon, Shield
 import { useMemo, useState } from "react"
 import { FileDependencies } from "@/components/analysis/file-dependencies"
 import { FileOutline } from "@/components/analysis/file-outline"
+import { FileSummary } from "@/components/understanding/file-summary"
 import { CodeViewer } from "@/components/code/code-viewer"
 import type { CodeFocus } from "@/components/code/code-viewer.client"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { getFileAnalysis } from "@/functions/analysis.functions"
+import { getFileSummary } from "@/functions/understanding.functions"
 import { getFileContent } from "@/functions/projects.functions"
 import { cn } from "@/lib/utils"
 import { exclusionReasonLabels, formatBytes } from "@/lib/format"
@@ -196,19 +198,21 @@ function TreeLevel({
   )
 }
 
-type PreviewTab = "code" | "outline" | "dependencies"
+type PreviewTab = "code" | "outline" | "dependencies" | "summary"
 
 function FilePreview({
   snapshotId,
   entry,
   focus,
   analysisReady,
+  understandingReady,
   onOpen
 }: {
   snapshotId: string
   entry: FileEntry | undefined
   focus: CodeFocus | undefined
   analysisReady: boolean
+  understandingReady: boolean
   onOpen: (selection: FileSelection) => void
 }) {
   const included = entry !== undefined && entry.excludedReason === null
@@ -223,6 +227,12 @@ function FilePreview({
     queryKey: ["file-analysis", snapshotId, entry?.path],
     queryFn: () => getFileAnalysis({ data: { snapshotId, path: entry!.path } }),
     enabled: analyzed,
+    staleTime: Infinity
+  })
+  const summary = useQuery({
+    queryKey: ["file-summary", snapshotId, entry?.path],
+    queryFn: () => getFileSummary({ data: { snapshotId, path: entry!.path } }),
+    enabled: included && understandingReady,
     staleTime: Infinity
   })
 
@@ -285,7 +295,8 @@ function FilePreview({
       focus={focus}
     />
   )
-  if (!analyzed) return code
+  const summaryData = summary.data ?? null
+  if (!analyzed && summaryData === null) return code
 
   const symbols = analysis.data?.symbols ?? []
   const dependencyCount = (analysis.data?.imports.length ?? 0) + (analysis.data?.importedBy.length ?? 0)
@@ -294,8 +305,9 @@ function FilePreview({
       <div className="border-b px-3 py-2">
         <TabsList>
           <TabsTrigger value="code">Codice</TabsTrigger>
-          <TabsTrigger value="outline">Struttura ({symbols.length})</TabsTrigger>
-          <TabsTrigger value="dependencies">Dipendenze ({dependencyCount})</TabsTrigger>
+          {analyzed && <TabsTrigger value="outline">Struttura ({symbols.length})</TabsTrigger>}
+          {analyzed && <TabsTrigger value="dependencies">Dipendenze ({dependencyCount})</TabsTrigger>}
+          {summaryData !== null && <TabsTrigger value="summary">Riassunto IA</TabsTrigger>}
         </TabsList>
       </div>
       <TabsContent value="code" className="min-h-0 flex-1">
@@ -327,6 +339,18 @@ function FilePreview({
           )}
         </ScrollArea>
       </TabsContent>
+      {summaryData !== null && (
+        <TabsContent value="summary" className="min-h-0 flex-1">
+          <ScrollArea className="h-full">
+            <FileSummary
+              summary={summaryData}
+              onSelectLines={(startLine, endLine) =>
+                onOpen({ path: entry.path, focus: { startLine, endLine, key: Date.now() } })
+              }
+            />
+          </ScrollArea>
+        </TabsContent>
+      )}
     </Tabs>
   )
 }
@@ -337,12 +361,14 @@ export function FileExplorer({
   snapshotId,
   entries,
   analysisReady,
+  understandingReady,
   selection,
   onSelectionChange
 }: {
   snapshotId: string
   entries: ReadonlyArray<FileEntry>
   analysisReady: boolean
+  understandingReady: boolean
   selection: FileSelection | undefined
   onSelectionChange: (selection: FileSelection) => void
 }) {
@@ -431,6 +457,7 @@ export function FileExplorer({
             entry={selected}
             focus={selection?.focus}
             analysisReady={analysisReady}
+            understandingReady={understandingReady}
             onOpen={onSelectionChange}
           />
         </div>

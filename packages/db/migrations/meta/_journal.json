@@ -15,6 +15,13 @@
       "when": 1792604263464,
       "tag": "0001_static_analysis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792756246410,
+      "tag": "0002_ai_understanding",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,9 @@
 import {
+  CardView,
   DatabaseError,
+  FeatureMap,
+  FileSummaryView,
+  ModelCallStats,
   DependencyOverview,
   FileAnalysisView,
   Job,
@@ -35,6 +39,10 @@ export const decodeFileContent = decode(SourceFileContent, "source_file content"
 export const decodeSymbolPage = decode(SymbolPage, "symbol")
 export const decodeFileAnalysis = decode(FileAnalysisView, "file analysis")
 export const decodeOverview = decode(DependencyOverview, "dependency overview")
+export const decodeFeatureMap = decode(FeatureMap, "rag feature map")
+export const decodeCard = decode(CardView, "rag card")
+export const decodeFileSummary = decode(FileSummaryView, "rag file summary")
+export const decodeModelCallStats = decode(ModelCallStats, "model_call stats")
 
 export const projectFromRow = (row: typeof project.$inferSelect) =>
   decodeProject({
@@ -62,6 +70,10 @@ export const snapshotFromRow = (row: typeof snapshot.$inferSelect) =>
     analyzedAt: row.analyzedAt,
     symbolCount: row.symbolCount,
     dependencyCount: row.dependencyCount,
+    understandingStatus: row.understandingStatus,
+    understoodAt: row.understoodAt,
+    featureCount: row.featureCount,
+    cardCount: row.cardCount,
     createdAt: row.createdAt
   })
 

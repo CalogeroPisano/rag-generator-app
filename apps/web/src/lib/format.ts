@@ -43,14 +43,31 @@ export const phaseLabels: Record<string, string> = {
   ingest: "Filtro e mascheramento",
   parse: "Analisi sintattica",
   resolve: "Risoluzione dipendenze",
+  prepare: "Preparazione",
+  "summarize-files": "Riassunti dei file",
+  "summarize-modules": "Riassunti dei moduli",
+  "map-features": "Mappa delle funzionalità",
+  "generate-cards": "Generazione schede",
   finalize: "Completamento"
 }
 
 /** Phases of each job type, in execution order, and the title of its progress card. */
 export const jobTypes: Record<
-  "acquisition" | "analysis",
+  "acquisition" | "analysis" | "understanding",
   { readonly title: string; readonly phases: ReadonlyArray<string> }
 > = {
   acquisition: { title: "Acquisizione", phases: ["fetch", "ingest", "finalize"] },
-  analysis: { title: "Analisi statica", phases: ["parse", "resolve", "finalize"] }
+  analysis: { title: "Analisi statica", phases: ["parse", "resolve", "finalize"] },
+  understanding: {
+    title: "Comprensione con IA",
+    phases: ["prepare", "summarize-files", "summarize-modules", "map-features", "generate-cards", "finalize"]
+  }
+}
+
+export const formatDuration = (ms: number): string => {
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min ${seconds % 60} s`
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
 }

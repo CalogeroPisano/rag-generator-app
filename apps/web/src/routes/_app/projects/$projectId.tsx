@@ -6,7 +6,8 @@ import {
   GitCommitHorizontalIcon,
   HashIcon,
   RefreshCwIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
+  SparklesIcon
 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -15,7 +16,8 @@ import { SymbolsTable } from "@/components/analysis/symbols-table"
 import { FileExplorer, type FileSelection } from "@/components/file-explorer"
 import { JobProgress } from "@/components/job-progress"
 import { PageHeader } from "@/components/page-header"
-import { AnalysisStatusBadge, SnapshotStatusBadge } from "@/components/status-badge"
+import { AnalysisStatusBadge, SnapshotStatusBadge, UnderstandingStatusBadge } from "@/components/status-badge"
+import { FeaturesPanel } from "@/components/understanding/features-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,8 +25,10 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { reanalyze } from "@/functions/analysis.functions"
 import { getProject, listFiles, retryJob } from "@/functions/projects.functions"
+import { getAiStatus, startUnderstanding } from "@/functions/understanding.functions"
 import { useJobStream } from "@/hooks/use-job-stream"
 import { formatDateTime } from "@/lib/format"
 
@@ -60,7 +64,7 @@ function Stat({ label, value, hint }: { label: string; value: number; hint?: str
   )
 }
 
-type ProjectTab = "files" | "symbols" | "dependencies"
+type ProjectTab = "files" | "symbols" | "dependencies" | "features"
 
 function AnalysisPending({ status }: { status: string | null }) {
   return (
@@ -71,6 +75,29 @@ function AnalysisPending({ status }: { status: string | null }) {
           {status === "failed"
             ? "Riprova dal riquadro di avanzamento o con «Rianalizza»."
             : "Simboli e dipendenze saranno disponibili al termine dell'analisi."}
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  )
+}
+
+function UnderstandingPending({ status }: { status: string | null }) {
+  return (
+    <Empty className="border">
+      <EmptyHeader>
+        <EmptyTitle>
+          {status === null
+            ? "Schede non ancora generate"
+            : status === "failed"
+              ? "Comprensione con IA non riuscita"
+              : "Comprensione con IA in corso"}
+        </EmptyTitle>
+        <EmptyDescription>
+          {status === null
+            ? "Avvia «Genera schede»: il modello riassume il codice, individua le funzionalità e scrive una scheda per ciascuna."
+            : status === "failed"
+              ? "Riprova dal riquadro di avanzamento o con «Genera schede»."
+              : "Le funzionalità e le schede saranno disponibili al termine."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -108,8 +135,19 @@ function ProjectPage() {
     onError: (error) => toast.error(error.message)
   })
 
+  const generateCards = useMutation({
+    mutationFn: (snapshotId: string) => startUnderstanding({ data: { snapshotId } }),
+    onSuccess: () => {
+      toast.info("Comprensione con IA avviata")
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] })
+    },
+    onError: (error) => toast.error(error.message)
+  })
+  const ai = useQuery({ queryKey: ["ai-status"], queryFn: () => getAiStatus(), staleTime: 60_000 })
+
   const readySnapshot = snapshot?.status === "ready" ? snapshot : null
   const analysisReady = readySnapshot?.analysisStatus === "ready"
+  const understandingReady = readySnapshot?.understandingStatus === "ready"
   const jobActive = job !== null && (job.status === "queued" || job.status === "running")
   const files = useQuery({ ...filesQuery(readySnapshot?.id ?? ""), enabled: readySnapshot !== null })
 
@@ -158,6 +196,9 @@ function ProjectPage() {
             </CardDescription>
             <CardAction className="flex items-center gap-2">
               {readySnapshot.analysisStatus !== null && <AnalysisStatusBadge status={readySnapshot.analysisStatus} />}
+              {readySnapshot.understandingStatus !== null && (
+                <UnderstandingStatusBadge status={readySnapshot.understandingStatus} />
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -171,9 +212,35 @@ function ProjectPage() {
                 )}
                 Rianalizza
               </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  {/* A span keeps the tooltip working on a disabled button. */}
+                  <span>
+                    <Button
+                      size="sm"
+                      disabled={!analysisReady || jobActive || generateCards.isPending || ai.data?.configured !== true}
+                      onClick={() => generateCards.mutate(readySnapshot.id)}
+                    >
+                      {generateCards.isPending ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <SparklesIcon data-icon="inline-start" />
+                      )}
+                      {understandingReady ? "Rigenera schede" : "Genera schede"}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {ai.data?.configured === false
+                    ? "Modello IA non configurato (AI_MODEL)"
+                    : !analysisReady
+                      ? "Disponibile al termine dell'analisi statica"
+                      : `Riassunti, mappa delle funzionalità e schede con ${ai.data?.model ?? "il modello configurato"}`}
+                </TooltipContent>
+              </Tooltip>
             </CardAction>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          <CardContent className="grid gap-4 sm:grid-cols-3 lg:grid-cols-7">
             <Stat label="File analizzati" value={readySnapshot.includedFiles} />
             <Stat
               label="Voci escluse"
@@ -183,6 +250,8 @@ function ProjectPage() {
             <Stat label="Credenziali mascherate" value={readySnapshot.maskedSecrets} hint="Prima di ogni salvataggio" />
             <Stat label="Simboli" value={readySnapshot.symbolCount} hint="Classi, funzioni, costanti…" />
             <Stat label="Dipendenze" value={readySnapshot.dependencyCount} hint="Import tra file e verso librerie" />
+            <Stat label="Funzionalità" value={readySnapshot.featureCount} hint="Individuate dall'IA" />
+            <Stat label="Schede" value={readySnapshot.cardCount} hint="Una per funzionalità" />
           </CardContent>
         </Card>
       )}
@@ -194,6 +263,7 @@ function ProjectPage() {
               <TabsTrigger value="files">File</TabsTrigger>
               <TabsTrigger value="symbols">Simboli</TabsTrigger>
               <TabsTrigger value="dependencies">Dipendenze</TabsTrigger>
+              <TabsTrigger value="features">Funzionalità</TabsTrigger>
             </TabsList>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <ShieldCheckIcon className="size-3.5" /> Contenuto mostrato già mascherato
@@ -207,6 +277,7 @@ function ProjectPage() {
                 snapshotId={readySnapshot.id}
                 entries={files.data}
                 analysisReady={analysisReady}
+                understandingReady={understandingReady}
                 selection={selection}
                 onSelectionChange={setSelection}
               />
@@ -229,6 +300,19 @@ function ProjectPage() {
               <DependencyOverview snapshotId={readySnapshot.id} onOpenFile={(path) => openFile({ path })} />
             ) : (
               <AnalysisPending status={readySnapshot.analysisStatus} />
+            )}
+          </TabsContent>
+          <TabsContent value="features">
+            {understandingReady ? (
+              <FeaturesPanel
+                snapshotId={readySnapshot.id}
+                onOpenReference={(path, startLine, endLine) =>
+                  openFile({ path, focus: { startLine, endLine, key: Date.now() } })
+                }
+                onOpenFile={(path) => openFile({ path })}
+              />
+            ) : (
+              <UnderstandingPending status={readySnapshot.understandingStatus} />
             )}
           </TabsContent>
         </Tabs>

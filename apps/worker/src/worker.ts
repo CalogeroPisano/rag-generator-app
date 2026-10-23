@@ -6,7 +6,8 @@ import {
   type JobType,
   removeStaleUploads,
   runJob,
-  SnapshotRepository
+  SnapshotRepository,
+  understandingPipeline
 } from "@code-to-rag/core"
 import { Config, Duration, Effect, Option, Schedule } from "effect"
 
@@ -30,7 +31,8 @@ export const WorkerOptionsConfig = (workerId: string) =>
 /** Pipeline for each job type; adding a job type without a pipeline is a type error. */
 const pipelines = {
   acquisition: acquisitionPipeline,
-  analysis: analysisPipeline
+  analysis: analysisPipeline,
+  understanding: understandingPipeline
 } as const satisfies Record<JobType, unknown>
 
 /** Runs one job while a background fiber keeps its heartbeat fresh. */
@@ -43,8 +45,14 @@ const processJob = Effect.fnUntraced(function* (job: Job, options: WorkerOptions
     Effect.annotateLogs({ jobId: job.id, type: job.type, attempt: job.attempts })
   )
   // Each job type has its own pipeline (and service requirements).
-  if (job.type === "acquisition") yield* runJob(pipelines.acquisition, job)
-  else yield* runJob(pipelines.analysis, job)
+  switch (job.type) {
+    case "acquisition":
+      return yield* runJob(pipelines.acquisition, job)
+    case "analysis":
+      return yield* runJob(pipelines.analysis, job)
+    case "understanding":
+      return yield* runJob(pipelines.understanding, job)
+  }
 }, Effect.scoped)
 
 /** One consumer: claims and runs jobs until interrupted. */
