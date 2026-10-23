@@ -7,7 +7,7 @@ a vector database that powers a RAG chatbot.
 
 Commercially distributable product, installed **on premise** with Docker Compose.
 
-> **Status:** phases 1–3 of 6 completed (source acquisition, static analysis, AI understanding). See [Roadmap](#roadmap).
+> **Status:** phases 1–3 of 7 completed (source acquisition, static analysis, AI understanding). See [Roadmap](#roadmap).
 
 ## Available features (phases 1–3)
 
@@ -107,9 +107,10 @@ docs/         architecture and flow documentation
 1. **Foundations and acquisition** — completed
 2. **Static analysis with tree-sitter**: symbols and dependencies between files — completed
 3. **AI understanding**: summaries, feature map, card generation with line references — completed
-4. Automated verification and assisted review
+4. Automated verification and assisted review; project deletion
 5. Indexing in pgvector, RAG chat with citations, test questions
 6. Incremental updates on new versions of the code
+7. Per-project knowledge export (archive + SQL) and import
 
 ## Third-party licenses
 

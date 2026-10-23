@@ -166,4 +166,7 @@ of every new dependency before adding it.
 - Phase 1 (foundations and acquisition): implemented.
 - Phase 2 (static analysis with tree-sitter: TS/JS, Java, C#, Go, Python): implemented.
 - Phase 3 (AI understanding: summaries, feature map, cards with line references, `rag` schema): implemented.
-- Next: phase 4 (verification and review).
+- Next: phase 4 (verification and review, plus project deletion).
+- Roadmap (user's order): 4 verification/review **and project deletion** (app tables + `rag` rows, which have no
+  FKs) → 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
+  archive + manifest, and SQL for another Postgres; import), last.

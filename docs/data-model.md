@@ -257,7 +257,7 @@ erDiagram
 ## Tables of the next phases
 
 They will be added with new migrations in their phases: `correction` (4), `embedding`, `test_question`, `test_run`
-(5).
+(5). Phase 7 adds no tables: it exports the `rag` data of a project.
 
 ## Migrations
 
