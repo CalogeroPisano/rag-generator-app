@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
-import { FileIcon, SparklesIcon } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { ClipboardCheckIcon, FileIcon, SparklesIcon } from "lucide-react"
 import { useState } from "react"
 import { CardStatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -14,10 +16,12 @@ import { ModelCallStats } from "./model-call-stats"
 
 /** Feature map of a snapshot: features on the left, the card of the selected one on the right. */
 export function FeaturesPanel({
+  projectId,
   snapshotId,
   onOpenReference,
   onOpenFile
 }: {
+  projectId: string
   snapshotId: string
   onOpenReference: OpenReference
   onOpenFile: (path: string) => void
@@ -76,7 +80,12 @@ export function FeaturesPanel({
                       {feature.card === null ? (
                         <Badge variant="secondary">Senza scheda</Badge>
                       ) : (
-                        <CardStatusBadge status={feature.card.status} />
+                        <>
+                          {feature.card.issues !== null && feature.card.issues > 0 && (
+                            <Badge variant="warning">{feature.card.issues}</Badge>
+                          )}
+                          <CardStatusBadge status={feature.card.status} />
+                        </>
                       )}
                     </span>
                     <span className="line-clamp-2 text-xs text-muted-foreground">{feature.description}</span>
@@ -97,7 +106,15 @@ export function FeaturesPanel({
               </EmptyHeader>
             </Empty>
           ) : (
-            <CardDetail snapshotId={snapshotId} cardId={selected.card.id} onOpenReference={onOpenReference} />
+            <>
+              <Button asChild className="self-start">
+                <Link to="/projects/$projectId/cards/$featureId" params={{ projectId, featureId: selected.id }}>
+                  <ClipboardCheckIcon data-icon="inline-start" />
+                  Apri la revisione
+                </Link>
+              </Button>
+              <CardDetail snapshotId={snapshotId} cardId={selected.card.id} onOpenReference={onOpenReference} />
+            </>
           )}
           <Card>
             <CardHeader>

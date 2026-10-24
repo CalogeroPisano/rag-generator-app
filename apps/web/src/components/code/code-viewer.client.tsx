@@ -32,9 +32,11 @@ export interface CodeViewerProps {
   /** 1-based lines containing masked secrets; highlighted in the gutter. */
   readonly secretLines: ReadonlyArray<number>
   readonly focus?: CodeFocus | undefined
+  /** Ranges to mark lightly (e.g. every line a card cites in this file). */
+  readonly highlights?: ReadonlyArray<{ readonly startLine: number; readonly endLine: number }> | undefined
 }
 
-export default function CodeViewer({ path, language, content, secretLines, focus }: CodeViewerProps) {
+export default function CodeViewer({ path, language, content, secretLines, focus, highlights }: CodeViewerProps) {
   const { resolvedTheme } = useTheme()
   // Kept in state (not a ref) so that the effects below run once the editor is mounted.
   const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -54,6 +56,17 @@ export default function CodeViewer({ path, language, content, secretLines, focus
     )
     return () => decorations.clear()
   }, [editor, secretLines, content])
+
+  useEffect(() => {
+    if (editor === null || highlights === undefined || highlights.length === 0) return
+    const decorations = editor.createDecorationsCollection(
+      highlights.map((range) => ({
+        range: new monaco.Range(range.startLine, 1, range.endLine, 1),
+        options: { isWholeLine: true, linesDecorationsClassName: "code-viewer-reference-gutter" }
+      }))
+    )
+    return () => decorations.clear()
+  }, [editor, highlights, content])
 
   useEffect(() => {
     if (editor === null || focus === undefined) return

@@ -48,20 +48,31 @@ export const phaseLabels: Record<string, string> = {
   "summarize-modules": "Riassunti dei moduli",
   "map-features": "Mappa delle funzionalità",
   "generate-cards": "Generazione schede",
+  "verify-cards": "Verifica schede",
+  process: "Elaborazione della scheda",
   finalize: "Completamento"
 }
 
 /** Phases of each job type, in execution order, and the title of its progress card. */
 export const jobTypes: Record<
-  "acquisition" | "analysis" | "understanding",
+  "acquisition" | "analysis" | "understanding" | "card",
   { readonly title: string; readonly phases: ReadonlyArray<string> }
 > = {
   acquisition: { title: "Acquisizione", phases: ["fetch", "ingest", "finalize"] },
   analysis: { title: "Analisi statica", phases: ["parse", "resolve", "finalize"] },
   understanding: {
     title: "Comprensione con IA",
-    phases: ["prepare", "summarize-files", "summarize-modules", "map-features", "generate-cards", "finalize"]
-  }
+    phases: [
+      "prepare",
+      "summarize-files",
+      "summarize-modules",
+      "map-features",
+      "generate-cards",
+      "verify-cards",
+      "finalize"
+    ]
+  },
+  card: { title: "Operazione su una scheda", phases: ["process"] }
 }
 
 export const formatDuration = (ms: number): string => {

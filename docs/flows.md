@@ -168,7 +168,8 @@ only masked contents and the static analysis, and writes only to the `rag` schem
 flowchart LR
   prepare["prepare<br/>reset rag data"] --> files["summarize-files<br/>declarations + file"]
   files --> modules["summarize-modules<br/>bottom-up"] --> map["map-features<br/>features + files"]
-  map --> cards["generate-cards<br/>one per feature"] --> finalize["finalize<br/>counts, ready"]
+  map --> cards["generate-cards<br/>one per feature"] --> verify["verify-cards<br/>second reading"]
+  verify --> finalize["finalize<br/>counts, ready"]
 ```
 
 | Phase               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -178,6 +179,7 @@ flowchart LR
 | `summarize-modules` | Directories bottom-up, from the summaries of their files and sub-modules; pass-through directories (one child, no files) are skipped. The root module is the project overview.                                                                                                                                                                                                                                                |
 | `map-features`      | The model lists the user-level features with their files and declarations, from the module overview and one line per file. Large projects are mapped in batches, then the candidates are merged. Paths and declarations that do not exist are dropped.                                                                                                                                                                        |
 | `generate-cards`    | For each feature, the files are read together: whole when they fit, otherwise the declarations of the feature with some context, then the first lines of the other files, then summaries only. The card cites path and lines for every statement; references outside the lines shown are dropped and statements left without one are counted. Resumable per card.                                                             |
+| `verify-cards`      | Second reading of every card against its code (see [Review](#automatic-verification)). Resumable: cards whose current version is verified are skipped.                                                                                                                                                                                                                                                                        |
 | `finalize`          | Counts features and cards, `understanding_status = ready`.                                                                                                                                                                                                                                                                                                                                                                    |
 
 - **Streaming**: answers are always streamed and parsed at the end. A non-streamed call to a slow local model would
@@ -192,7 +194,78 @@ flowchart LR
 - **Prompts are versioned** (`packages/ai/src/prompts/*`): the version is stored with every result and in the call
   log. Changing a prompt means bumping its version.
 - Requesting the understanding again starts from scratch for that snapshot (phase 6 will reuse unchanged summaries,
-  keyed by content hash).
+  keyed by content hash). Reviewer corrections are kept: after the new feature map they are re-attached to the feature
+  with the same name and applied to its new card (see [Review](#review)).
+- Understanding and card jobs exclude each other on a project: a new feature map would replace the cards being
+  reviewed.
+
+## Review
+
+### Automatic verification
+
+`verify-cards` (last phase of the understanding) and the "Verifica" action on a card run the `card-verify` prompt:
+the model reads the card next to the code of its feature (the cited lines are always included) and returns a verdict
+per statement (`supported`, `partial`, `unsupported`, with a short note) plus what the code shows and the card
+misses (validation rules, limits, errors, settings). Statements are identified as `section.index`; statements the
+verifier leaves out count as not assessed. The result is stored per card version in `rag.card_verification`:
+
+- `issues` = statements not fully supported + missing items + statements without references;
+- a card still `generated` or `flagged` becomes `flagged` when issues were found, `generated` otherwise; review
+  decisions (`in_review`, `approved`, `excluded`) are not touched;
+- a verification of an older version is shown as outdated; the next understanding run verifies the card again.
+
+### Card states
+
+```mermaid
+stateDiagram-v2
+  [*] --> generated: card written
+  generated --> flagged: verification finds issues
+  flagged --> generated: verification passes
+  generated --> in_review: manual edit / assisted correction
+  flagged --> in_review: manual edit / assisted correction
+  generated --> approved
+  flagged --> approved
+  in_review --> approved
+  generated --> excluded
+  flagged --> excluded
+  in_review --> excluded
+  approved --> in_review: reopened
+  excluded --> in_review: reopened
+  in_review --> generated: regenerated
+```
+
+`needs_recheck` is reserved for incremental updates (phase 6).
+
+### Operations
+
+The review page (`/projects/<id>/cards/<featureId>`) shows the card next to the code: the files of the feature as
+tabs, every cited range marked, the selected statement in focus.
+
+| Action              | How it runs                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Approve / Exclude   | Immediate; the reviewer's name and time are stored on the card. Reopening puts it back `in_review`.                                                                                                           |
+| Edit                | Structured form (every section, item and reference). References must point to existing lines of the snapshot's files, the others are dropped. New version, `in_review`; the verification becomes outdated.    |
+| Assisted correction | The reviewer describes the mistake. The text is stored in `rag.correction`, then a `card` job asks the model to update the current card checking the code again; the new version is `in_review` and verified. |
+| Verify              | `card` job: verification of the current version.                                                                                                                                                              |
+| Regenerate          | `card` job: the card is written from scratch with all the feature's corrections, then verified (`generated`/`flagged`). Manual edits are lost; corrections are not.                                           |
+
+Card jobs carry `{ cardId, featureId, operation }` in `job.payload`; there is at most one active job per card
+(`dedupe_key` = feature id). They look the card up by feature, since regeneration replaces the card row.
+
+### Corrections across regenerations
+
+Corrections belong to the project and to a feature **name** (`feature_key`: lower case, punctuation and spacing
+ignored), not to a card. Every card written for that feature (understanding, regeneration, correction) gets them in
+its prompt, oldest first, and records the version that applied them. After a new feature map they are re-attached by
+name; those whose feature disappeared are listed as orphans in the features tab.
+
+## Deleting a project
+
+"Elimina progetto" on the project page, confirmed by typing the project name. Refused while a job of the project is
+running (queued jobs are deleted with it). In order: the project's knowledge in the `rag` schema (snapshots,
+summaries, features, cards, verifications, corrections; deleted explicitly since `rag` has no foreign keys), then the
+project with its snapshots, files, symbols, jobs and events (cascade), the masked blobs no other project uses, and the
+uploaded archives on disk. The model call log is kept (its references become null).
 
 ## Real-time progress
 

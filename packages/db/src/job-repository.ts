@@ -1,5 +1,5 @@
 import { JobId, JobRepository, type JobEventKind, type JobProgress, NotFoundError } from "@code-to-rag/core"
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm"
+import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm"
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { Effect, Layer, Option } from "effect"
 import { Database, type Drizzle, query } from "./client.ts"
@@ -69,6 +69,7 @@ export const JobRepositoryLive = Layer.effect(
                 and(
                   eq(job.snapshotId, input.snapshotId),
                   eq(job.type, input.type),
+                  input.dedupeKey === undefined ? isNull(job.dedupeKey) : eq(job.dedupeKey, input.dedupeKey),
                   inArray(job.status, ["queued", "running"])
                 )
               )
@@ -79,7 +80,9 @@ export const JobRepositoryLive = Layer.effect(
               projectId: input.projectId,
               snapshotId: input.snapshotId,
               status: "queued",
-              maxAttempts: input.maxAttempts
+              maxAttempts: input.maxAttempts,
+              payload: input.payload ?? null,
+              dedupeKey: input.dedupeKey ?? null
             })
             await appendJobEvent(tx, input.id, "queued")
             return input.id
@@ -87,6 +90,15 @@ export const JobRepositoryLive = Layer.effect(
         )
         return yield* get(JobId.make(id)).pipe(Effect.catchTag("NotFoundError", Effect.die))
       }),
+
+      active: (projectId) =>
+        query("job.active", () =>
+          db
+            .select()
+            .from(job)
+            .where(and(eq(job.projectId, projectId), inArray(job.status, ["queued", "running"])))
+            .orderBy(asc(job.createdAt))
+        ).pipe(Effect.flatMap((rows) => Effect.forEach(rows, jobFromRow))),
 
       claim: Effect.fnUntraced(function* (workerId: string) {
         const claimedId = yield* query("job.claim", () =>

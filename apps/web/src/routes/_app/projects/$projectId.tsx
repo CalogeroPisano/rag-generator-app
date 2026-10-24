@@ -16,6 +16,7 @@ import { SymbolsTable } from "@/components/analysis/symbols-table"
 import { FileExplorer, type FileSelection } from "@/components/file-explorer"
 import { JobProgress } from "@/components/job-progress"
 import { PageHeader } from "@/components/page-header"
+import { DeleteProjectDialog } from "@/components/projects/delete-project-dialog"
 import { AnalysisStatusBadge, SnapshotStatusBadge, UnderstandingStatusBadge } from "@/components/status-badge"
 import { FeaturesPanel } from "@/components/understanding/features-panel"
 import { Badge } from "@/components/ui/badge"
@@ -172,7 +173,16 @@ function ProjectPage() {
             <span>Creato il {formatDateTime(project.createdAt)}</span>
           </span>
         }
-        actions={snapshot !== null ? <SnapshotStatusBadge status={snapshot.status} /> : undefined}
+        actions={
+          <>
+            {snapshot !== null && <SnapshotStatusBadge status={snapshot.status} />}
+            <DeleteProjectDialog
+              projectId={project.id}
+              projectName={project.name}
+              disabled={job !== null && job.status === "running"}
+            />
+          </>
+        }
       />
 
       {job !== null && job.status !== "succeeded" && (
@@ -305,6 +315,7 @@ function ProjectPage() {
           <TabsContent value="features">
             {understandingReady ? (
               <FeaturesPanel
+                projectId={projectId}
                 snapshotId={readySnapshot.id}
                 onOpenReference={(path, startLine, endLine) =>
                   openFile({ path, focus: { startLine, endLine, key: Date.now() } })

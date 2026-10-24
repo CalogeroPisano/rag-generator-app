@@ -90,6 +90,21 @@ import `db` from `core`.
    foreign keys to `public`** (user's choice); the app deletes `rag.snapshot` rows itself (cascade inside `rag`).
    Summaries and cards are always in English. Bump a prompt's `version` whenever its text or schema changes.
 
+### Data flow (phase 4: verification and review)
+
+1. `verify-cards` (understanding) and card jobs use `verifyCard` (`core/src/understanding/cards.ts`, prompt
+   `card-verify`): verdict per statement id `section.index` + missing items → `rag.card_verification` (per card
+   version); `saveVerification` moves only `generated`↔`flagged`.
+2. Card operations needing a model are `card` jobs (`core/src/review.ts`, `cardPipeline`, single phase `process`):
+   `job.payload` = `{ cardId, featureId, operation: verify|regenerate|correct }`, `dedupe_key` = feature id. The card is
+   looked up by feature (regeneration replaces the card row; `saveCard` continues the version number).
+3. Corrections (`rag.correction`) belong to project + normalized feature name (`featureKey`), are passed to every
+   card prompt of the feature and re-attached by `reattachCorrections` after `replaceFeatures`. Manual edits
+   (`editCard`) and decisions (`setCardStatus`) are immediate; references are checked against the snapshot's files.
+4. Understanding and card jobs exclude each other per project (`JobRepository.active`).
+5. `deleteProject`: refused if a job is running; `KnowledgeRepository.deleteProject` (rag rows + corrections) then
+   `ProjectRepository.delete` (cascade, orphan blobs) and upload files.
+
 ### Jobs and phases
 
 - A phase has a stable `name`, takes only the job, is **idempotent** (clears/overwrites what a previous attempt
@@ -166,7 +181,7 @@ of every new dependency before adding it.
 - Phase 1 (foundations and acquisition): implemented.
 - Phase 2 (static analysis with tree-sitter: TS/JS, Java, C#, Go, Python): implemented.
 - Phase 3 (AI understanding: summaries, feature map, cards with line references, `rag` schema): implemented.
-- Next: phase 4 (verification and review, plus project deletion).
-- Roadmap (user's order): 4 verification/review **and project deletion** (app tables + `rag` rows, which have no
-  FKs) → 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
+- Phase 4 (verification and review, project deletion): implemented.
+- Next: phase 5 (embeddings in pgvector, RAG chat with citations, test questions).
+- Roadmap (user's order): 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
   archive + manifest, and SQL for another Postgres; import), last.

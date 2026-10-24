@@ -210,6 +210,10 @@ export const job = pgTable(
       total: number | null
       message: string | null
     }>(),
+    /** Job-specific input (card jobs: card, feature and operation). */
+    payload: jsonb("payload"),
+    /** With type and snapshot, identifies duplicates (e.g. one active job per card); null for snapshot-wide jobs. */
+    dedupeKey: text("dedupe_key"),
     lockedBy: text("locked_by"),
     heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
     runAfter: timestamp("run_after", { withTimezone: true }).defaultNow().notNull(),

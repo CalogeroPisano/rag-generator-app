@@ -1,4 +1,4 @@
-import { CardContent } from "@code-to-rag/ai"
+import { CardContent, CardReference, CardSectionName, StatementVerdict } from "@code-to-rag/ai"
 import { ExclusionReason, ImportKind, SymbolKind } from "@code-to-rag/analysis"
 import { Schema } from "effect"
 
@@ -176,7 +176,9 @@ export class CardInfo extends Schema.Class<CardInfo>("CardInfo")({
   id: Schema.String,
   status: CardStatus,
   title: Schema.String,
-  unreferencedStatements: Schema.Int
+  unreferencedStatements: Schema.Int,
+  /** Issues found by the verification of the current version; null when not verified (or outdated). */
+  issues: Schema.NullOr(Schema.Int)
 }) {}
 
 export class FeatureEntry extends Schema.Class<FeatureEntry>("FeatureEntry")({
@@ -189,23 +191,65 @@ export class FeatureEntry extends Schema.Class<FeatureEntry>("FeatureEntry")({
   card: Schema.NullOr(CardInfo)
 }) {}
 
+/** A reviewer's description of a mistake; kept across regenerations (re-attached by feature name). */
+export class Correction extends Schema.Class<Correction>("Correction")({
+  id: Schema.String,
+  featureName: Schema.String,
+  /** Null when no feature of the current map has the same name (orphan). */
+  featureId: Schema.NullOr(Schema.String),
+  text: Schema.String,
+  authorName: Schema.String,
+  createdAt: Schema.Date,
+  /** Card version that applied it last; null while pending. */
+  appliedVersion: Schema.NullOr(Schema.Int)
+}) {}
+
 export class FeatureMap extends Schema.Class<FeatureMap>("FeatureMap")({
   /** Summary of the project root module. */
   projectSummary: Schema.NullOr(Schema.String),
-  features: Schema.Array(FeatureEntry)
+  features: Schema.Array(FeatureEntry),
+  /** Corrections whose feature no longer exists in the map. */
+  orphanCorrections: Schema.Array(Correction)
+}) {}
+
+export const CardOperation = Schema.Literals(["verify", "regenerate", "correct"])
+export type CardOperation = typeof CardOperation.Type
+
+/** Result of the automatic verification of one card version. */
+export class CardVerification extends Schema.Class<CardVerification>("CardVerification")({
+  cardVersion: Schema.Int,
+  verifiedAt: Schema.Date,
+  model: Schema.String,
+  statements: Schema.Array(Schema.Struct({ id: Schema.String, verdict: StatementVerdict, note: Schema.String })),
+  missing: Schema.Array(
+    Schema.Struct({ section: CardSectionName, text: Schema.String, references: Schema.Array(CardReference) })
+  ),
+  /** Statements not fully supported + missing items + statements without references. */
+  issues: Schema.Int
 }) {}
 
 export class CardView extends Schema.Class<CardView>("CardView")({
   id: Schema.String,
-  featureId: Schema.String,
-  featureName: Schema.String,
+  feature: Schema.Struct({
+    id: Schema.String,
+    name: Schema.String,
+    description: Schema.String,
+    files: Schema.Array(Schema.String),
+    symbols: Schema.Array(FeatureSymbol)
+  }),
   status: CardStatus,
   content: CardContent,
   sourceRevision: Schema.String,
   version: Schema.Int,
   unreferencedStatements: Schema.Int,
   model: Schema.String,
-  createdAt: Schema.Date
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+  /** Last manual edit or review decision. */
+  reviewedBy: Schema.NullOr(Schema.String),
+  reviewedAt: Schema.NullOr(Schema.Date),
+  verification: Schema.NullOr(CardVerification),
+  corrections: Schema.Array(Correction)
 }) {}
 
 export class SymbolSummaryEntry extends Schema.Class<SymbolSummaryEntry>("SymbolSummaryEntry")({
@@ -238,9 +282,17 @@ export class ModelCallStats extends Schema.Class<ModelCallStats>("ModelCallStats
   models: Schema.Array(Schema.String)
 }) {}
 
+/** Input of a `card` job: one operation on one card. */
+export const CardJobPayload = Schema.Struct({
+  cardId: Schema.String,
+  featureId: Schema.String,
+  operation: CardOperation
+})
+export type CardJobPayload = typeof CardJobPayload.Type
+
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
-export const JobType = Schema.Literals(["acquisition", "analysis", "understanding"])
+export const JobType = Schema.Literals(["acquisition", "analysis", "understanding", "card"])
 export type JobType = typeof JobType.Type
 
 export const JobStatus = Schema.Literals(["queued", "running", "succeeded", "failed", "cancelled"])
@@ -266,6 +318,8 @@ export class Job extends Schema.Class<Job>("Job")({
   maxAttempts: Schema.Int,
   lastError: Schema.NullOr(Schema.String),
   progress: Schema.NullOr(JobProgress),
+  /** Job-specific input; only card jobs have one. */
+  payload: Schema.NullOr(CardJobPayload),
   createdAt: Schema.Date,
   updatedAt: Schema.Date,
   finishedAt: Schema.NullOr(Schema.Date)
@@ -327,3 +381,7 @@ export const CreateProjectInput = Schema.Struct({
   source: Schema.Union([ZipSource, GitSource])
 })
 export type CreateProjectInput = typeof CreateProjectInput.Type
+
+/** Manual edit of a card by a reviewer. */
+export const EditCardInput = Schema.Struct({ cardId: Schema.String, content: CardContent })
+export type EditCardInput = typeof EditCardInput.Type

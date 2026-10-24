@@ -1,10 +1,20 @@
 import { KnowledgeRepository, NotFoundError } from "@code-to-rag/core"
-import { and, asc, count, eq, inArray } from "drizzle-orm"
+import { and, asc, count, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm"
 import { Effect, Layer, Option } from "effect"
 import { randomUUID } from "node:crypto"
 import { Database, query } from "./client.ts"
-import { decodeCard, decodeFeatureMap, decodeFileSummary } from "./rows.ts"
-import { card, cardReference, feature, fileSummary, moduleSummary, ragSnapshot, symbolSummary } from "./schema/rag.ts"
+import { decodeCard, decodeCorrection, decodeFeatureMap, decodeFileSummary } from "./rows.ts"
+import {
+  card,
+  cardReference,
+  cardVerification,
+  correction,
+  feature,
+  fileSummary,
+  moduleSummary,
+  ragSnapshot,
+  symbolSummary
+} from "./schema/rag.ts"
 
 /** Rows per INSERT: well below the 65 535 bind parameters of a Postgres statement. */
 const INSERT_CHUNK = 1000
@@ -14,6 +24,24 @@ const chunks = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A
   for (let i = 0; i < items.length; i += size) result.push(items.slice(i, i + size))
   return result
 }
+
+/** Key used to re-attach corrections to a feature of a new map: case, spacing and punctuation ignored. */
+export const featureKey = (name: string): string =>
+  name
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+
+const correctionView = (row: typeof correction.$inferSelect) => ({
+  id: row.id,
+  featureName: row.featureName,
+  featureId: row.featureId,
+  text: row.text,
+  authorName: row.authorName,
+  createdAt: row.createdAt,
+  appliedVersion: row.appliedVersion
+})
 
 /** Knowledge base in the `rag` schema. It never joins application tables. */
 export const KnowledgeRepositoryLive = Layer.effect(
@@ -121,7 +149,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
         ),
 
       featureMap: Effect.fnUntraced(function* (id) {
-        const [features, root] = yield* Effect.all([
+        const [features, root, orphans] = yield* Effect.all([
           query("knowledge.features", () =>
             db
               .select({
@@ -134,10 +162,14 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 cardId: card.id,
                 cardStatus: card.status,
                 cardTitle: card.title,
-                unreferencedStatements: card.unreferencedStatements
+                cardVersion: card.version,
+                unreferencedStatements: card.unreferencedStatements,
+                verifiedVersion: cardVerification.cardVersion,
+                issues: cardVerification.issues
               })
               .from(feature)
               .leftJoin(card, eq(card.featureId, feature.id))
+              .leftJoin(cardVerification, eq(cardVerification.cardId, card.id))
               .where(eq(feature.snapshotId, id))
               .orderBy(asc(feature.position))
           ),
@@ -146,6 +178,14 @@ export const KnowledgeRepositoryLive = Layer.effect(
               .select({ summary: moduleSummary.summary })
               .from(moduleSummary)
               .where(and(eq(moduleSummary.snapshotId, id), eq(moduleSummary.path, "")))
+          ),
+          query("knowledge.orphanCorrections", () =>
+            db
+              .select()
+              .from(correction)
+              .innerJoin(ragSnapshot, eq(ragSnapshot.projectId, correction.projectId))
+              .where(and(eq(ragSnapshot.id, id), isNull(correction.featureId)))
+              .orderBy(asc(correction.createdAt))
           )
         ])
         return yield* decodeFeatureMap({
@@ -164,15 +204,24 @@ export const KnowledgeRepositoryLive = Layer.effect(
                     id: row.cardId,
                     status: row.cardStatus,
                     title: row.cardTitle,
-                    unreferencedStatements: row.unreferencedStatements
+                    unreferencedStatements: row.unreferencedStatements,
+                    // A verification of an older version is outdated.
+                    issues: row.verifiedVersion !== null && row.verifiedVersion === row.cardVersion ? row.issues : null
                   }
-          }))
+          })),
+          orphanCorrections: orphans.map((row) => correctionView(row.correction))
         })
       }),
 
       saveCard: (id, newCard, provenance) =>
         query("knowledge.saveCard", () =>
           db.transaction(async (tx) => {
+            // Versions continue across regenerations of the same feature's card.
+            const [previous] = await tx
+              .select({ version: card.version })
+              .from(card)
+              .where(eq(card.featureId, newCard.featureId))
+            const version = (previous?.version ?? 0) + 1
             await tx.delete(card).where(eq(card.featureId, newCard.featureId))
             const cardId = randomUUID()
             await tx.insert(card).values({
@@ -184,6 +233,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
               summary: newCard.content.summary,
               content: newCard.content,
               sourceRevision: newCard.sourceRevision,
+              version,
               unreferencedStatements: newCard.unreferencedStatements,
               promptVersion: provenance.promptVersion,
               model: provenance.model
@@ -191,31 +241,61 @@ export const KnowledgeRepositoryLive = Layer.effect(
             for (const chunk of chunks(newCard.references, INSERT_CHUNK)) {
               await tx.insert(cardReference).values(chunk.map((reference) => ({ cardId, ...reference })))
             }
+            return version
           })
         ),
 
       getCard: Effect.fnUntraced(function* (id, cardId) {
         const rows = yield* query("knowledge.getCard", () =>
           db
-            .select({
-              id: card.id,
-              featureId: card.featureId,
-              featureName: feature.name,
-              status: card.status,
-              content: card.content,
-              sourceRevision: card.sourceRevision,
-              version: card.version,
-              unreferencedStatements: card.unreferencedStatements,
-              model: card.model,
-              createdAt: card.createdAt
-            })
+            .select({ card, feature, verification: cardVerification })
             .from(card)
             .innerJoin(feature, eq(feature.id, card.featureId))
+            .leftJoin(cardVerification, eq(cardVerification.cardId, card.id))
             .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
         )
         const row = rows[0]
         if (row === undefined) return yield* new NotFoundError({ entity: "card", id: cardId })
-        return yield* decodeCard(row)
+        const corrections = yield* query("knowledge.cardCorrections", () =>
+          db
+            .select()
+            .from(correction)
+            .where(eq(correction.featureId, row.feature.id))
+            .orderBy(asc(correction.createdAt))
+        )
+        const v = row.verification
+        return yield* decodeCard({
+          id: row.card.id,
+          feature: {
+            id: row.feature.id,
+            name: row.feature.name,
+            description: row.feature.description,
+            files: row.feature.files,
+            symbols: row.feature.symbols
+          },
+          status: row.card.status,
+          content: row.card.content,
+          sourceRevision: row.card.sourceRevision,
+          version: row.card.version,
+          unreferencedStatements: row.card.unreferencedStatements,
+          model: row.card.model,
+          createdAt: row.card.createdAt,
+          updatedAt: row.card.updatedAt,
+          reviewedBy: row.card.reviewedBy,
+          reviewedAt: row.card.reviewedAt,
+          verification:
+            v === null
+              ? null
+              : {
+                  cardVersion: v.cardVersion,
+                  verifiedAt: v.verifiedAt,
+                  model: v.model,
+                  statements: v.statements,
+                  missing: v.missing,
+                  issues: v.issues
+                },
+          corrections: corrections.map(correctionView)
+        })
       }),
 
       fileSummary: Effect.fnUntraced(function* (id, path) {
@@ -255,12 +335,158 @@ export const KnowledgeRepositoryLive = Layer.effect(
         return { features: features[0]?.total ?? 0, cards: cards[0]?.total ?? 0 }
       }),
 
-      deleteSnapshots: (ids) =>
+      deleteProject: (projectId) =>
+        query("knowledge.deleteProject", () =>
+          db.transaction(async (tx) => {
+            // Everything else cascades from rag.snapshot; corrections belong to the project.
+            await tx.delete(ragSnapshot).where(eq(ragSnapshot.projectId, projectId))
+            await tx.delete(correction).where(eq(correction.projectId, projectId))
+          })
+        ),
+
+      cardsToVerify: (id) =>
+        query("knowledge.cardsToVerify", () =>
+          db
+            .select({ id: card.id })
+            .from(card)
+            .leftJoin(cardVerification, eq(cardVerification.cardId, card.id))
+            .where(
+              and(
+                eq(card.snapshotId, id),
+                ne(card.status, "excluded"),
+                or(isNull(cardVerification.cardId), lt(cardVerification.cardVersion, card.version))
+              )
+            )
+            .orderBy(asc(card.createdAt))
+        ).pipe(Effect.map((rows) => rows.map((row) => row.id))),
+
+      saveVerification: (id, cardId, verification, provenance) =>
+        query("knowledge.saveVerification", () =>
+          db.transaction(async (tx) => {
+            const values = {
+              cardVersion: verification.cardVersion,
+              statements: verification.statements,
+              missing: verification.missing,
+              issues: verification.issues,
+              promptVersion: provenance.promptVersion,
+              model: provenance.model,
+              verifiedAt: new Date()
+            }
+            await tx
+              .insert(cardVerification)
+              .values({ cardId, ...values })
+              .onConflictDoUpdate({ target: cardVerification.cardId, set: values })
+            // Only automatic states follow the verification; review decisions are kept.
+            await tx
+              .update(card)
+              .set({ status: verification.issues > 0 ? "flagged" : "generated" })
+              .where(and(eq(card.snapshotId, id), eq(card.id, cardId), inArray(card.status, ["generated", "flagged"])))
+          })
+        ),
+
+      editCard: (id, cardId, edit, reviewer) =>
+        query("knowledge.editCard", () =>
+          db.transaction(async (tx) => {
+            const updated = await tx
+              .update(card)
+              .set({
+                content: edit.content,
+                title: edit.content.title,
+                summary: edit.content.summary,
+                unreferencedStatements: edit.unreferencedStatements,
+                version: sql`${card.version} + 1`,
+                status: "in_review",
+                reviewedBy: reviewer.name,
+                reviewedAt: new Date()
+              })
+              .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
+              .returning({ id: card.id })
+            if (updated.length === 0) return false
+            await tx.delete(cardReference).where(eq(cardReference.cardId, cardId))
+            for (const chunk of chunks(edit.references, INSERT_CHUNK)) {
+              await tx.insert(cardReference).values(chunk.map((reference) => ({ cardId, ...reference })))
+            }
+            return true
+          })
+        ).pipe(
+          Effect.flatMap((found) =>
+            found ? Effect.void : Effect.fail(new NotFoundError({ entity: "card", id: cardId }))
+          )
+        ),
+
+      setCardStatus: (id, cardId, status, reviewer) =>
+        query("knowledge.setCardStatus", () =>
+          db
+            .update(card)
+            .set({ status, reviewedBy: reviewer.name, reviewedAt: new Date() })
+            .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
+            .returning({ id: card.id })
+        ).pipe(
+          Effect.flatMap((rows) =>
+            rows.length > 0 ? Effect.void : Effect.fail(new NotFoundError({ entity: "card", id: cardId }))
+          )
+        ),
+
+      addCorrection: (input) =>
+        query("knowledge.addCorrection", () =>
+          db
+            .insert(correction)
+            .values({
+              id: randomUUID(),
+              projectId: input.projectId,
+              featureId: input.featureId,
+              featureName: input.featureName,
+              featureKey: featureKey(input.featureName),
+              text: input.text,
+              authorId: input.author.id,
+              authorName: input.author.name
+            })
+            .returning()
+        ).pipe(Effect.flatMap((rows) => decodeCorrection(correctionView(rows[0]!)))),
+
+      corrections: (id) =>
+        query("knowledge.corrections", () =>
+          db
+            .select({ correction })
+            .from(correction)
+            .innerJoin(feature, eq(feature.id, correction.featureId))
+            .where(eq(feature.snapshotId, id))
+            .orderBy(asc(correction.createdAt))
+        ).pipe(
+          Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeCorrection(correctionView(row.correction))))
+        ),
+
+      markCorrectionsApplied: (ids, cardVersion) =>
         ids.length === 0
           ? Effect.void
-          : query("knowledge.deleteSnapshots", () =>
-              db.delete(ragSnapshot).where(inArray(ragSnapshot.id, [...ids]))
-            ).pipe(Effect.asVoid)
+          : query("knowledge.markCorrectionsApplied", () =>
+              db
+                .update(correction)
+                .set({ appliedVersion: cardVersion })
+                .where(inArray(correction.id, [...ids]))
+            ).pipe(Effect.asVoid),
+
+      reattachCorrections: (id, projectId) =>
+        query("knowledge.reattachCorrections", () =>
+          db.transaction(async (tx) => {
+            const features = await tx
+              .select({ id: feature.id, name: feature.name })
+              .from(feature)
+              .where(eq(feature.snapshotId, id))
+            const byKey = new Map(features.map((f) => [featureKey(f.name), f.id]))
+            const corrections = await tx
+              .select({ id: correction.id, featureKey: correction.featureKey })
+              .from(correction)
+              .where(eq(correction.projectId, projectId))
+            for (const row of corrections) {
+              // Re-attached corrections are pending again: the new card has not applied them yet.
+              await tx
+                .update(correction)
+                .set({ featureId: byKey.get(row.featureKey) ?? null, appliedVersion: null })
+                .where(eq(correction.id, row.id))
+            }
+          })
+        )
     })
   })
 )

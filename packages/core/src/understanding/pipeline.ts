@@ -8,10 +8,8 @@
  * does not pay twice for the same model calls.
  */
 import {
-  AiError,
   CARD,
-  CardContent,
-  cardInstructions,
+  CARD_VERIFY,
   estimateTokens,
   FEATURE_MAP,
   FEATURE_MERGE,
@@ -27,9 +25,6 @@ import {
   LanguageModel,
   MODULE_SUMMARY,
   moduleSummaryInstructions,
-  type PromptRef,
-  renderCard,
-  renderCardExcerpt,
   renderFeatureMap,
   renderFeatureMapFile,
   renderFeatureMerge,
@@ -55,12 +50,12 @@ import {
   SnapshotRepository,
   UnderstandingRepository
 } from "../ports.ts"
-import { buildCardExcerpts } from "./excerpts.ts"
 import { dedupeFeatures, mergeFeatures, normalizeFeatures } from "./features.ts"
 import { planModules } from "./modules.ts"
 import { splitIntoParts } from "./parts.ts"
-import { checkReferences } from "./references.ts"
+import { loadCardSources, verifyCard, writeCard } from "./cards.ts"
 import { selectFiles } from "./select.ts"
+import { chunks, groupBy, inputBudget, provenance, skipInvalid, toPhaseError } from "./shared.ts"
 
 /** Summaries and cards are always written in English. */
 export const UNDERSTANDING_LANGUAGE = "en"
@@ -68,63 +63,11 @@ export const UNDERSTANDING_LANGUAGE = "en"
 /** Files loaded and summarized together (the model's own concurrency limit still applies). */
 const FILE_BATCH_SIZE = 8
 const CARD_BATCH_SIZE = 4
-/** Tokens kept free for the chat template and estimation errors. */
-const SAFETY_TOKENS = 512
 /** Declarations listed in a file prompt and per file in the feature map. */
 const MAX_FILE_DECLARATIONS = 80
 const MAX_FEATURE_MAP_DECLARATIONS = 6
 
 type Progress = PhaseContext["progress"]
-
-const chunks = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> => {
-  const result: Array<ReadonlyArray<A>> = []
-  for (let i = 0; i < items.length; i += size) result.push(items.slice(i, i + size))
-  return result
-}
-
-const groupBy = <A>(items: ReadonlyArray<A>, key: (item: A) => string): Map<string, Array<A>> => {
-  const groups = new Map<string, Array<A>>()
-  for (const item of items) {
-    const k = key(item)
-    const group = groups.get(k)
-    if (group === undefined) groups.set(k, [item])
-    else group.push(item)
-  }
-  return groups
-}
-
-/** Database errors are transient; model errors carry their own `retryable`. */
-const toPhaseError = (phase: string) => (error: { readonly _tag: string }) => {
-  if (error instanceof AiError) return new PhaseError({ phase, message: error.message, retryable: error.retryable })
-  if (error instanceof PhaseError) return error
-  return new PhaseError({
-    phase,
-    message: error._tag === "DatabaseError" ? "Errore del database" : "Errore imprevisto durante la comprensione",
-    retryable: error._tag !== "NotFoundError"
-  })
-}
-
-/**
- * Runs a model task for one item; an answer still invalid after the correction
- * request skips the item (counted) instead of failing the whole job.
- */
-const skipInvalid = <A, R>(effect: Effect.Effect<A, AiError, R>, onSkip: () => void) =>
-  effect.pipe(
-    Effect.map((value): A | undefined => value),
-    Effect.catchIf(
-      (error) => error.kind === "invalid_output",
-      () => Effect.sync(() => (onSkip(), undefined))
-    )
-  )
-
-/** Input token budget of a prompt with the given instructions. */
-const inputBudget = (model: typeof LanguageModel.Service, instructions: string): number =>
-  model.contextTokens - model.maxOutputTokens - estimateTokens(instructions) - SAFETY_TOKENS
-
-const provenance = (model: typeof LanguageModel.Service, prompt: PromptRef) => ({
-  model: model.modelId ?? "unknown",
-  promptVersion: prompt.version
-})
 
 // ---------------------------------------------------------------------------
 // prepare
@@ -467,6 +410,8 @@ const mapFeatures = Effect.fn("understanding.mapFeatures")(
       })
     }
     yield* knowledge.replaceFeatures(job.snapshotId, features, provenance(model, FEATURE_MAP))
+    const info = yield* understanding.snapshotInfo(job.snapshotId)
+    yield* knowledge.reattachCorrections(job.snapshotId, info.projectId)
     yield* progress({
       completed: batches.length,
       total: batches.length,
@@ -484,13 +429,17 @@ const generateCards = Effect.fn("understanding.generateCards")(
     const understanding = yield* UnderstandingRepository
     const knowledge = yield* KnowledgeRepository
     const model = yield* LanguageModel
+    const context = { phase: "generate-cards", jobId: job.id, snapshotId: job.snapshotId }
 
     const info = yield* understanding.snapshotInfo(job.snapshotId)
     const { features } = yield* knowledge.featureMap(job.snapshotId)
     const pending = features.filter((feature) => feature.card === null)
-    const summaries = new Map((yield* knowledge.fileSummaries(job.snapshotId)).map((s) => [s.path, s.summary]))
-    const declarations = yield* understanding.declarations(job.snapshotId)
-    const budget = inputBudget(model, cardInstructions)
+    const sources = yield* loadCardSources(job.snapshotId)
+    // Reviewer corrections survive regenerations: they go into the prompt of their feature's card.
+    const corrections = groupBy(
+      (yield* knowledge.corrections(job.snapshotId)).filter((c) => c.featureId !== null),
+      (c) => c.featureId ?? ""
+    )
 
     let completed = features.length - pending.length
     let skipped = 0
@@ -507,32 +456,19 @@ const generateCards = Effect.fn("understanding.generateCards")(
         batch,
         (feature) =>
           Effect.gen(function* () {
-            const files = yield* understanding.loadFiles(job.snapshotId, feature.files)
-            const header = estimateTokens(renderCard({ feature, excerpts: [], omitted: [] }))
-            const { excerpts, omitted, shown } = buildCardExcerpts({
-              files,
-              summaries,
-              featureSymbols: feature.symbols,
-              declarations: declarations.filter((d) => feature.files.includes(d.path)),
-              maxTokens: Math.max(512, budget - header - feature.files.length * 40)
-            })
-            if (excerpts.length === 0) {
-              skipped++
-              return
-            }
-            const answer = yield* skipInvalid(
-              model.generateObject({
-                prompt: CARD,
-                context: { phase: "generate-cards", jobId: job.id, snapshotId: job.snapshotId },
-                instructions: cardInstructions,
-                input: renderCard({ feature, excerpts: excerpts.map(renderCardExcerpt), omitted }),
-                schema: CardContent
+            const featureCorrections = corrections.get(feature.id) ?? []
+            const checked = yield* skipInvalid(
+              writeCard(context, feature, sources, {
+                current: null,
+                corrections: featureCorrections.map((c) => c.text)
               }),
               () => skipped++
             )
-            if (answer === undefined) return
-            const checked = checkReferences(answer, shown)
-            yield* knowledge.saveCard(
+            if (checked === undefined) {
+              skipped++
+              return
+            }
+            const version = yield* knowledge.saveCard(
               job.snapshotId,
               {
                 featureId: feature.id,
@@ -544,6 +480,12 @@ const generateCards = Effect.fn("understanding.generateCards")(
               },
               provenance(model, CARD)
             )
+            if (featureCorrections.length > 0) {
+              yield* knowledge.markCorrectionsApplied(
+                featureCorrections.map((c) => c.id),
+                version
+              )
+            }
             completed++
           }),
         { concurrency: "unbounded", discard: true }
@@ -552,6 +494,47 @@ const generateCards = Effect.fn("understanding.generateCards")(
     }
   },
   (effect) => effect.pipe(Effect.mapError(toPhaseError("generate-cards")))
+)
+
+// ---------------------------------------------------------------------------
+// verify-cards
+
+const verifyCards = Effect.fn("understanding.verifyCards")(
+  function* (job: Job, progress: Progress) {
+    const knowledge = yield* KnowledgeRepository
+    const model = yield* LanguageModel
+    const context = { phase: "verify-cards", jobId: job.id, snapshotId: job.snapshotId }
+    const pending = yield* knowledge.cardsToVerify(job.snapshotId)
+    const sources = yield* loadCardSources(job.snapshotId)
+
+    let completed = 0
+    let skipped = 0
+    let flagged = 0
+    const report = () =>
+      progress({
+        completed,
+        total: pending.length,
+        message: `${completed} di ${pending.length} schede verificate${flagged > 0 ? `, ${flagged} da controllare` : ""}${skipped > 0 ? ` (${skipped} saltate)` : ""}`
+      })
+    yield* report()
+    for (const batch of chunks(pending, CARD_BATCH_SIZE)) {
+      yield* Effect.forEach(
+        batch,
+        (cardId) =>
+          Effect.gen(function* () {
+            const card = yield* knowledge.getCard(job.snapshotId, cardId)
+            const verification = yield* skipInvalid(verifyCard(context, card.feature, sources, card), () => skipped++)
+            completed++
+            if (verification === undefined) return
+            if (verification.issues > 0) flagged++
+            yield* knowledge.saveVerification(job.snapshotId, cardId, verification, provenance(model, CARD_VERIFY))
+          }),
+        { concurrency: "unbounded", discard: true }
+      )
+      yield* report()
+    }
+  },
+  (effect) => effect.pipe(Effect.mapError(toPhaseError("verify-cards")))
 )
 
 // ---------------------------------------------------------------------------
@@ -577,6 +560,7 @@ export const understandingPipeline: Pipeline<
     { name: "summarize-modules", run: ({ job, progress }) => summarizeModules(job, progress) },
     { name: "map-features", run: ({ job, progress }) => mapFeatures(job, progress) },
     { name: "generate-cards", run: ({ job, progress }) => generateCards(job, progress) },
+    { name: "verify-cards", run: ({ job, progress }) => verifyCards(job, progress) },
     { name: "finalize", run: ({ job }) => finalize(job) }
   ],
   onFailed: (job) =>
@@ -595,6 +579,11 @@ export const requestUnderstanding = Effect.fn("requestUnderstanding")(function* 
   const { snapshot } = yield* snapshots.get(snapshotId)
   if (snapshot.status !== "ready" || snapshot.analysisStatus !== "ready") {
     return yield* new InvalidInputError({ message: "L'analisi statica del progetto non è ancora completata" })
+  }
+  // A new feature map would replace the cards that card jobs are working on.
+  const active = yield* jobs.active(snapshot.projectId)
+  if (active.some((job) => job.type === "card")) {
+    return yield* new InvalidInputError({ message: "Attendi la fine delle operazioni in corso sulle schede" })
   }
   const job = yield* jobs.enqueue({
     id: JobId.make(randomUUID()),

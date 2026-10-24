@@ -121,6 +121,10 @@ the persistence technology, and the dependency always goes from `db` to `core`, 
 | Summaries and cards in English                            | Product owner's choice; prompts are in English too.                                                                          |
 | Understanding started manually, as its own job            | It costs model time: the user decides when; it can be re-run without re-acquiring or re-analyzing.                           |
 | Own validation and correction loop around the AI SDK      | Effect Schema validates the answer; one correction request, then a typed error; every HTTP call is logged.                   |
+| Verification automatic and on demand                      | Every card is checked against the code before anyone reviews it; a reviewer can re-check after a change.                     |
+| Card operations as jobs (`card`, one per card)            | Model calls take minutes on modest hardware; the page polls the job and refreshes the card.                                  |
+| Corrections tied to the feature name                      | Product owner's choice: they survive regenerations and new feature maps; unmatched ones stay visible as orphans.             |
+| Project deletion refused while a job runs                 | Avoids a worker writing to a deleted project; queued jobs are deleted with it.                                               |
 | Interface in Italian; code, docs and logs in English      | Italian end users; code, documentation and logs are for developers and operators.                                            |
 
 ## Ready for durable workflows

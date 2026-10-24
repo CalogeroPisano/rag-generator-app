@@ -52,6 +52,8 @@ export const buildCardExcerpts = (input: {
   readonly summaries: ReadonlyMap<string, string>
   readonly featureSymbols: ReadonlyArray<FeatureSymbol>
   readonly declarations: ReadonlyArray<Declaration>
+  /** Ranges that must be shown like the feature declarations (e.g. the references of a card being verified). */
+  readonly extraRanges?: ReadonlyArray<{ readonly path: string; readonly startLine: number; readonly endLine: number }>
   /** Token budget of the rendered excerpts. */
   readonly maxTokens: number
 }): CardExcerpts => {
@@ -63,6 +65,9 @@ export const buildCardExcerpts = (input: {
       ...(symbolRanges.get(declaration.path) ?? []),
       [declaration.startLine, declaration.endLine] as const
     ])
+  }
+  for (const range of input.extraRanges ?? []) {
+    symbolRanges.set(range.path, [...(symbolRanges.get(range.path) ?? []), [range.startLine, range.endLine] as const])
   }
   // Files with declarations of the feature first: they matter most.
   const ordered = [...input.files].sort(

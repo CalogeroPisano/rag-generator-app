@@ -1,6 +1,7 @@
 import {
   acquisitionPipeline,
   analysisPipeline,
+  cardPipeline,
   type Job,
   JobRepository,
   type JobType,
@@ -32,7 +33,8 @@ export const WorkerOptionsConfig = (workerId: string) =>
 const pipelines = {
   acquisition: acquisitionPipeline,
   analysis: analysisPipeline,
-  understanding: understandingPipeline
+  understanding: understandingPipeline,
+  card: cardPipeline
 } as const satisfies Record<JobType, unknown>
 
 /** Runs one job while a background fiber keeps its heartbeat fresh. */
@@ -52,6 +54,8 @@ const processJob = Effect.fnUntraced(function* (job: Job, options: WorkerOptions
       return yield* runJob(pipelines.analysis, job)
     case "understanding":
       return yield* runJob(pipelines.understanding, job)
+    case "card":
+      return yield* runJob(pipelines.card, job)
   }
 }, Effect.scoped)
 

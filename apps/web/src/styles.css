@@ -155,3 +155,10 @@
   width: 3px !important;
   margin-left: 3px;
 }
+
+/* Lines cited by the card under review (the selected statement uses the focus style). */
+.code-viewer-reference-gutter {
+  background-color: color-mix(in oklch, var(--info) 45%, transparent);
+  width: 3px !important;
+  margin-left: 3px;
+}

@@ -1,7 +1,6 @@
 import {
   AiConfig,
   AiError,
-  type CardContent,
   makeLanguageModel,
   type OutputSchema,
   RollupOutput,
@@ -33,17 +32,15 @@ import { simulateReadableStream } from "ai"
 import { MockLanguageModelV4 } from "ai/test"
 import { sql } from "drizzle-orm"
 import { Effect, Layer, ManagedRuntime, Option } from "effect"
-import { zipSync } from "fflate"
 import { randomBytes, randomUUID } from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as nodePath from "node:path"
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { defaultRespond, sampleProject } from "./support/understanding.ts"
 
 const url = testDatabaseUrl()
 if (url === undefined && process.env["CI"] !== undefined) throw new Error("TEST_DATABASE_URL is required in CI")
-
-const encode = (text: string) => new TextEncoder().encode(text)
 
 /** Answers of the scripted model, chosen per prompt; tests replace it to inject failures. */
 let respond: (request: StructuredRequest<OutputSchema>) => unknown = () => undefined
@@ -59,90 +56,6 @@ const makeLayer = (databaseUrl: string) =>
     })
   ).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(makeTestDatabaseLayer(databaseUrl)))
 type Services = Layer.Success<ReturnType<typeof makeLayer>>
-
-const sampleProject = () =>
-  zipSync({
-    "web/src/orders/service.ts": encode(
-      [
-        `import { formatPrice } from "../lib/money"`,
-        `/** Creates orders. */`,
-        `export class OrderService {`,
-        `  create(qty: number) {`,
-        `    if (qty > 100) throw new Error("Massimo 100 pezzi")`,
-        `    return formatPrice(qty)`,
-        `  }`,
-        `}`,
-        ``
-      ].join("\n")
-    ),
-    "web/src/lib/money.ts": encode(`export function formatPrice(value: number) { return value.toFixed(2) }\n`),
-    "web/src/orders/service.test.ts": encode(`import { OrderService } from "./service"\n`),
-    "config/app.json": encode(`{ "maxOrderQuantity": 100 }\n`),
-    "README.md": encode("# Shop\n")
-  })
-
-const card: CardContent = {
-  title: "Orders",
-  summary: "Users can create orders.",
-  behavior: [
-    {
-      text: "Creates an order for the given quantity.",
-      references: [{ path: "web/src/orders/service.ts", startLine: 4, endLine: 7 }]
-    }
-  ],
-  configuration: [],
-  parameters: [
-    {
-      name: "qty",
-      description: "Quantity to order",
-      type: "number",
-      required: true,
-      defaultValue: null,
-      references: [{ path: "web/src/orders/service.ts", startLine: 4, endLine: 4 }]
-    }
-  ],
-  limits: [
-    // Invented file: dropped by the reference check.
-    { text: "At most 100 pieces.", references: [{ path: "web/src/invented.ts", startLine: 1, endLine: 2 }] }
-  ],
-  validationRules: [],
-  errors: [
-    {
-      condition: "Quantity above 100",
-      message: "Massimo 100 pezzi",
-      references: [{ path: "web/src/orders/service.ts", startLine: 5, endLine: 5 }]
-    }
-  ]
-}
-
-/** A plausible answer for every prompt of the pipeline. */
-const defaultRespond = (request: StructuredRequest<OutputSchema>): unknown => {
-  switch (request.prompt.id) {
-    case "file-summary": {
-      const path = /^File: (\S+)/.exec(request.input)?.[1] ?? "?"
-      const names = [...request.input.matchAll(/^- \w+ (\S+) \(lines/gm)].map((m) => m[1])
-      return { summary: `Summary of ${path}.`, symbols: names.map((name) => ({ name, summary: `About ${name}.` })) }
-    }
-    case "module-summary":
-      return { summary: `Module ${/^Module: (.+)$/m.exec(request.input)?.[1] ?? "?"}.` }
-    case "feature-map":
-      return {
-        features: [
-          {
-            name: "Orders",
-            description: "Create orders.",
-            files: ["web/src/orders/service.ts", "web/src/lib/money.ts", "web/src/invented.ts"],
-            symbols: ["OrderService.create", "formatPrice"]
-          },
-          { name: "Ghost", description: "Not in the code.", files: ["nowhere.ts"], symbols: [] }
-        ]
-      }
-    case "card":
-      return card
-    default:
-      return undefined
-  }
-}
 
 describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () => {
   let runtime: ManagedRuntime.ManagedRuntime<Services, unknown>
@@ -203,6 +116,7 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
       "summarize-modules",
       "map-features",
       "generate-cards",
+      "verify-cards",
       "finalize"
     ])
 
@@ -232,11 +146,23 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
         { path: "web/src/orders/service.ts", qualifiedName: "OrderService.create" },
         { path: "web/src/lib/money.ts", qualifiedName: "formatPrice" }
       ],
-      card: { status: "generated", title: "Orders", unreferencedStatements: 1 }
+      // Verification: 1 unsupported statement + 1 missing rule + 1 statement without references.
+      card: { status: "flagged", title: "Orders", unreferencedStatements: 1, issues: 3 }
     })
 
     const view = await run(KnowledgeRepository.use((k) => k.getCard(snapshotId, feature.card!.id)))
-    expect(view.featureName).toBe("Orders")
+    expect(view.feature.name).toBe("Orders")
+    expect(view.verification).toMatchObject({
+      cardVersion: 1,
+      issues: 3,
+      missing: [{ section: "validationRules", references: [{ path: "web/src/orders/service.ts", startLine: 5 }] }]
+    })
+    expect(view.verification?.statements.map((s) => s.id)).toEqual([
+      "behavior.0",
+      "parameters.0",
+      "limits.0",
+      "errors.0"
+    ])
     expect(view.content.limits[0]?.references).toEqual([])
     expect(view.content.errors[0]?.references).toEqual([
       { path: "web/src/orders/service.ts", startLine: 5, endLine: 5 }
@@ -277,7 +203,7 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
     await run(Database.use(({ db }) => Effect.promise(() => db.execute(sql`update job set run_after = now()`))))
     const resumed = await runClaimed()
     expect(resumed.status).toBe("succeeded")
-    expect(calls).toEqual(["card"])
+    expect(calls).toEqual(["card", "card-verify"])
   })
 
   it("skips files whose answer stays invalid and starts over on a new request", async () => {

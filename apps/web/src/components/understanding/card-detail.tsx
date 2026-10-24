@@ -104,7 +104,7 @@ export function CardDetail({
       <CardHeader>
         <CardTitle className="text-lg">{content.title}</CardTitle>
         <CardDescription>
-          {card.data.featureName} · {card.data.model} · {formatDateTime(card.data.createdAt)}
+          {card.data.feature.name} · {card.data.model} · {formatDateTime(card.data.createdAt)}
         </CardDescription>
         <CardAction>
           <CardStatusBadge status={card.data.status} />

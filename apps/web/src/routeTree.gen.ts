@@ -18,6 +18,7 @@ import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects
 import { Route as AppProjectsNewRouteImport } from './routes/_app/projects/new'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiJobsJobIdEventsRouteImport } from './routes/api/jobs/$jobId/events'
+import { Route as AppProjectsProjectIdCardsFeatureIdRouteImport } from './routes/_app/projects/$projectId_.cards.$featureId'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -63,6 +64,12 @@ const ApiJobsJobIdEventsRoute = ApiJobsJobIdEventsRouteImport.update({
   path: '/api/jobs/$jobId/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppProjectsProjectIdCardsFeatureIdRoute =
+  AppProjectsProjectIdCardsFeatureIdRouteImport.update({
+    id: '/projects/$projectId_/cards/$featureId',
+    path: '/projects/$projectId/cards/$featureId',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -73,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/projects/': typeof AppProjectsIndexRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
+  '/projects/$projectId/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -83,6 +91,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/projects': typeof AppProjectsIndexRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
+  '/projects/$projectId/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -95,6 +104,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
+  '/_app/projects/$projectId_/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/projects/'
     | '/api/jobs/$jobId/events'
+    | '/projects/$projectId/cards/$featureId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/projects'
     | '/api/jobs/$jobId/events'
+    | '/projects/$projectId/cards/$featureId'
   id:
     | '__root__'
     | '/_app'
@@ -128,6 +140,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/_app/projects/'
     | '/api/jobs/$jobId/events'
+    | '/_app/projects/$projectId_/cards/$featureId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -203,6 +216,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiJobsJobIdEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/projects/$projectId_/cards/$featureId': {
+      id: '/_app/projects/$projectId_/cards/$featureId'
+      path: '/projects/$projectId/cards/$featureId'
+      fullPath: '/projects/$projectId/cards/$featureId'
+      preLoaderRoute: typeof AppProjectsProjectIdCardsFeatureIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -211,6 +231,7 @@ interface AppRouteChildren {
   AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRoute
   AppProjectsNewRoute: typeof AppProjectsNewRoute
   AppProjectsIndexRoute: typeof AppProjectsIndexRoute
+  AppProjectsProjectIdCardsFeatureIdRoute: typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -218,6 +239,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppProjectsProjectIdRoute: AppProjectsProjectIdRoute,
   AppProjectsNewRoute: AppProjectsNewRoute,
   AppProjectsIndexRoute: AppProjectsIndexRoute,
+  AppProjectsProjectIdCardsFeatureIdRoute:
+    AppProjectsProjectIdCardsFeatureIdRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

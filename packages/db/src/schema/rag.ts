@@ -140,6 +140,9 @@ export const card = rag.table(
     version: integer("version").notNull().default(1),
     /** Statements without any valid reference (candidates for verification). */
     unreferencedStatements: integer("unreferenced_statements").notNull().default(0),
+    /** Last manual edit or review decision (name copied: no link to the application's users). */
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     promptVersion: integer("prompt_version").notNull(),
     model: text("model").notNull(),
     createdAt: createdAt(),
@@ -177,5 +180,49 @@ export const cardReference = rag.table(
   (table) => [
     index("rag_card_reference_card_idx").on(table.cardId),
     index("rag_card_reference_path_idx").on(table.path)
+  ]
+)
+
+/** Automatic verification of a card version (one row per card, replaced at every verification). */
+export const cardVerification = rag.table("card_verification", {
+  cardId: uuid("card_id")
+    .primaryKey()
+    .references(() => card.id, { onDelete: "cascade" }),
+  /** Card version that was verified: an older one means the verification is outdated. */
+  cardVersion: integer("card_version").notNull(),
+  /** `[{ id: "section.index", verdict, note }]` */
+  statements: jsonb("statements").notNull(),
+  /** `[{ section, text, references }]`: what the code shows and the card does not say. */
+  missing: jsonb("missing").notNull(),
+  issues: integer("issues").notNull(),
+  promptVersion: integer("prompt_version").notNull(),
+  model: text("model").notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }).defaultNow().notNull()
+})
+
+/**
+ * Reviewer corrections. They outlive regenerations: they belong to the project
+ * and to a feature *name*; `feature_id` points to the feature of the current
+ * map with that name, if any (re-attached after every new feature map).
+ */
+export const correction = rag.table(
+  "correction",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id").notNull(),
+    featureId: uuid("feature_id").references(() => feature.id, { onDelete: "set null" }),
+    featureName: text("feature_name").notNull(),
+    /** Normalized feature name used to re-attach the correction. */
+    featureKey: text("feature_key").notNull(),
+    text: text("text").notNull(),
+    authorId: text("author_id").notNull(),
+    authorName: text("author_name").notNull(),
+    /** Card version that applied it last; null while pending. */
+    appliedVersion: integer("applied_version"),
+    createdAt: createdAt()
+  },
+  (table) => [
+    index("rag_correction_project_idx").on(table.projectId, table.featureKey),
+    index("rag_correction_feature_idx").on(table.featureId)
   ]
 )

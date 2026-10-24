@@ -7,9 +7,9 @@ a vector database that powers a RAG chatbot.
 
 Commercially distributable product, installed **on premise** with Docker Compose.
 
-> **Status:** phases 1–3 of 7 completed (source acquisition, static analysis, AI understanding). See [Roadmap](#roadmap).
+> **Status:** phases 1–4 of 7 completed (source acquisition, static analysis, AI understanding, review). See [Roadmap](#roadmap).
 
-## Available features (phases 1–3)
+## Available features (phases 1–4)
 
 - **Acquisition** from a zip archive (streamed upload) or a Git repository, including private ones with a read-only
   token (stored encrypted).
@@ -29,6 +29,11 @@ Commercially distributable product, installed **on premise** with Docker Compose
   its files together. Every statement of a card cites the source lines it comes from; references are checked against
   the code shown to the model. Works with any OpenAI-compatible endpoint (Ollama, vLLM), never the Vercel AI
   Gateway. Summaries and cards are written in English and stored in a separate Postgres schema, `rag`.
+- **Verification and review**: a second model reading checks every card against the code (verdict per statement,
+  missing rules); side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
+  reviewer describes the mistake, the model rewrites the card) and regeneration. Corrections are kept and re-applied
+  at every regeneration.
+- **Project deletion**, with everything it produced (knowledge base included).
 - **Model call log**: phase, model, duration, tokens and outcome of every call, never the code.
 - **Web interface**: login, project list, new project, job progress, file tree with exclusions, code viewer
   (Monaco) with file outline, dependencies and AI summary, symbol search, dependency overview, features and cards with
@@ -107,7 +112,7 @@ docs/         architecture and flow documentation
 1. **Foundations and acquisition** — completed
 2. **Static analysis with tree-sitter**: symbols and dependencies between files — completed
 3. **AI understanding**: summaries, feature map, card generation with line references — completed
-4. Automated verification and assisted review; project deletion
+4. **Automated verification and assisted review; project deletion** — completed
 5. Indexing in pgvector, RAG chat with citations, test questions
 6. Incremental updates on new versions of the code
 7. Per-project knowledge export (archive + SQL) and import

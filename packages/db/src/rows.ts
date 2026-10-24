@@ -1,5 +1,6 @@
 import {
   CardView,
+  Correction,
   DatabaseError,
   FeatureMap,
   FileSummaryView,
@@ -41,6 +42,7 @@ export const decodeFileAnalysis = decode(FileAnalysisView, "file analysis")
 export const decodeOverview = decode(DependencyOverview, "dependency overview")
 export const decodeFeatureMap = decode(FeatureMap, "rag feature map")
 export const decodeCard = decode(CardView, "rag card")
+export const decodeCorrection = decode(Correction, "rag correction")
 export const decodeFileSummary = decode(FileSummaryView, "rag file summary")
 export const decodeModelCallStats = decode(ModelCallStats, "model_call stats")
 
@@ -90,6 +92,7 @@ export const jobFromRow = (row: typeof job.$inferSelect) =>
     maxAttempts: row.maxAttempts,
     lastError: row.lastError,
     progress: row.progress,
+    payload: row.payload ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     finishedAt: row.finishedAt

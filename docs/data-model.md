@@ -175,6 +175,8 @@ erDiagram
   rag_snapshot ||--o{ feature : ""
   feature ||--o| card : ""
   card ||--o{ card_reference : ""
+  card ||--o| card_verification : ""
+  feature |o--o{ correction : "feature_id (set null)"
 
   rag_snapshot {
     uuid id PK "same id as public.snapshot (no FK)"
@@ -235,6 +237,28 @@ erDiagram
     text source_revision
     int version
     int unreferenced_statements
+    text reviewed_by "name copied, no FK"
+    timestamptz reviewed_at
+  }
+  card_verification {
+    uuid card_id PK "FK"
+    int card_version
+    jsonb statements "[{id, verdict, note}]"
+    jsonb missing "[{section, text, references}]"
+    int issues
+    text model
+    timestamptz verified_at
+  }
+  correction {
+    uuid id PK
+    uuid project_id "no FK"
+    uuid feature_id FK "null when orphan"
+    text feature_name
+    text feature_key "normalized name"
+    text text
+    text author_id
+    text author_name
+    int applied_version
   }
   card_reference {
     bigint id PK
@@ -251,13 +275,20 @@ erDiagram
 - **card.content** is the structured card (`CardContent` in `packages/ai/src/prompts/card.ts`): title, summary and the
   sections `behavior`, `configuration`, `parameters`, `limits`, `validationRules`, `errors`; every item carries its
   references. **card_reference** holds one row per cited range, for queries by file (phase 6).
-- `unreferenced_statements` counts statements left without a valid reference: phase 4 verification starts from them.
+- `unreferenced_statements` counts statements left without a valid reference; they count as verification issues.
+- **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`.
+- **correction**: reviewer corrections. They do not cascade from `rag.snapshot`: they belong to the project and to a
+  feature name, survive new feature maps (re-attached by `feature_key`) and are deleted only with the project.
+- The reviewer's name is copied into `card.reviewed_by` and `correction.author_name` (no link to the application's
+  users, like the rest of `rag`).
 - `prompt_version` and `model` are stored with every summary, feature and card.
 
 ## Tables of the next phases
 
-They will be added with new migrations in their phases: `correction` (4), `embedding`, `test_question`, `test_run`
-(5). Phase 7 adds no tables: it exports the `rag` data of a project.
+They will be added with new migrations in their phases: `embedding`, `test_question`, `test_run` (5). Phase 7 adds no
+tables: it exports the `rag` data of a project.
+
+The `job` table also has `payload` (input of `card` jobs) and `dedupe_key` (one active job per card).
 
 ## Migrations
 

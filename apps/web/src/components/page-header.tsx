@@ -9,10 +9,9 @@ import {
   BreadcrumbSeparator
 } from "@/components/ui/breadcrumb"
 
-interface Crumb {
-  readonly label: string
-  readonly to?: "/projects"
-}
+type Crumb =
+  | { readonly label: string; readonly to?: "/projects" }
+  | { readonly label: string; readonly to: "/projects/$projectId"; readonly params: { readonly projectId: string } }
 
 export function PageHeader({
   title,
@@ -38,7 +37,13 @@ export function PageHeader({
                     <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
                   ) : (
                     <BreadcrumbLink asChild>
-                      <Link to={crumb.to}>{crumb.label}</Link>
+                      {"params" in crumb ? (
+                        <Link to={crumb.to} params={crumb.params}>
+                          {crumb.label}
+                        </Link>
+                      ) : (
+                        <Link to={crumb.to}>{crumb.label}</Link>
+                      )}
                     </BreadcrumbLink>
                   )}
                 </BreadcrumbItem>

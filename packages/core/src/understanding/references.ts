@@ -16,25 +16,30 @@ export interface CheckedCard {
 
 const normalizePath = (path: string): string => path.trim().replace(/^\.?\//, "")
 
+/** Keeps the references inside the lines the model was shown, normalized (rounded, ordered, clamped). */
+export const checkReferenceList = (
+  references: ReadonlyArray<CardReference>,
+  shown: ShownRanges
+): Array<CardReference> =>
+  references.flatMap((reference) => {
+    const path = normalizePath(reference.path)
+    const file = shown.get(path)
+    if (file === undefined) return []
+    let start = Math.round(reference.startLine)
+    let end = Math.round(reference.endLine)
+    if (end < start) [start, end] = [end, start]
+    start = Math.max(1, start)
+    end = Math.min(file.totalLines, end)
+    if (start > end) return []
+    // The range must overlap what the model was shown.
+    if (!file.ranges.some(([first, last]) => start <= last && end >= first)) return []
+    return [{ path, startLine: start, endLine: end }]
+  })
+
 export const checkReferences = (content: CardContent, shown: ShownRanges): CheckedCard => {
   const rows: Array<NewCardReference> = []
   let unreferenced = 0
-
-  const check = (references: ReadonlyArray<CardReference>): Array<CardReference> =>
-    references.flatMap((reference) => {
-      const path = normalizePath(reference.path)
-      const file = shown.get(path)
-      if (file === undefined) return []
-      let start = Math.round(reference.startLine)
-      let end = Math.round(reference.endLine)
-      if (end < start) [start, end] = [end, start]
-      start = Math.max(1, start)
-      end = Math.min(file.totalLines, end)
-      if (start > end) return []
-      // The range must overlap what the model was shown.
-      if (!file.ranges.some(([first, last]) => start <= last && end >= first)) return []
-      return [{ path, startLine: start, endLine: end }]
-    })
+  const check = (references: ReadonlyArray<CardReference>) => checkReferenceList(references, shown)
 
   const section = <T extends { readonly references: ReadonlyArray<CardReference> }>(
     name: string,

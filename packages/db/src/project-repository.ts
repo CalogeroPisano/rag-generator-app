@@ -1,10 +1,10 @@
-import { NotFoundError, ProjectId, ProjectRepository, ProjectSummary } from "@code-to-rag/core"
+import { NotFoundError, ProjectId, ProjectRepository, ProjectSummary, UploadId } from "@code-to-rag/core"
 import { desc, inArray, sql } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { Database, query } from "./client.ts"
 import { appendJobEvent } from "./job-repository.ts"
 import { jobFromRow, projectFromRow, snapshotFromRow } from "./rows.ts"
-import { job, project, snapshot } from "./schema/app.ts"
+import { job, project, snapshot, sourceBlob, sourceFile } from "./schema/app.ts"
 
 export const ProjectRepositoryLive = Layer.effect(
   ProjectRepository,
@@ -106,7 +106,31 @@ export const ProjectRepositoryLive = Layer.effect(
         const row = rows[0]
         if (row === undefined || row.url === null) return yield* new NotFoundError({ entity: "git source", id })
         return { url: row.url, ref: row.ref, username: row.username, encryptedToken: row.encryptedToken }
-      })
+      }),
+
+      delete: (id) =>
+        query("project.delete", () =>
+          db.transaction(async (tx) => {
+            const uploads = await tx
+              .select({ uploadId: snapshot.uploadId })
+              .from(snapshot)
+              .where(sql`${snapshot.projectId} = ${id} and ${snapshot.uploadId} is not null`)
+            // Blobs are shared across projects (deduplicated by hash): remember this project's, delete the orphans.
+            await tx.execute(sql`
+              create temporary table deleted_hashes on commit drop as
+              select distinct f.content_hash as hash
+              from ${sourceFile} f join ${snapshot} s on s.id = f.snapshot_id
+              where s.project_id = ${id} and f.content_hash is not null`)
+            // Snapshots, files, symbols, jobs and events cascade; the model call log keeps its rows (set null).
+            await tx.delete(project).where(sql`${project.id} = ${id}`)
+            await tx.execute(sql`
+              delete from ${sourceBlob} b
+              using deleted_hashes d
+              where b.hash = d.hash
+                and not exists (select 1 from ${sourceFile} f where f.content_hash = b.hash)`)
+            return uploads.flatMap((row) => (row.uploadId === null ? [] : [UploadId.make(row.uploadId)]))
+          })
+        ).pipe(Effect.map((uploadIds) => ({ uploadIds })))
     })
   })
 )

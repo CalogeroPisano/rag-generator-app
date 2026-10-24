@@ -7,7 +7,7 @@ import { Schema } from "effect"
 import type { PromptRef } from "../language-model.ts"
 import { COMMON_RULES, numberLines } from "./format.ts"
 
-export const CARD: PromptRef = { id: "card", version: 2 }
+export const CARD: PromptRef = { id: "card", version: 3 }
 
 // Plain numbers: an integer schema adds ±2^53 bounds that weigh on constrained decoding. Callers round them.
 export const CardReference = Schema.Struct({
@@ -68,6 +68,8 @@ export const cardInstructions = [
   "Every statement must cite the lines that support it, as path + startLine + endLine taken from the line numbers",
   "shown in the excerpts. Do not cite lines you were not shown.",
   "Be concise: at most 6 items per section, each a single sentence of at most 25 words, usually one reference each.",
+  "Reviewer corrections, when present, describe mistakes of earlier versions of this card: apply each one when the",
+  "code confirms it; if the code clearly contradicts a correction, follow the code.",
   COMMON_RULES
 ].join("\n")
 
@@ -98,6 +100,10 @@ export const renderCard = (input: {
   readonly excerpts: ReadonlyArray<string>
   /** Linked files that did not fit: only their summary. */
   readonly omitted: ReadonlyArray<{ readonly path: string; readonly summary: string | null }>
+  /** Reviewer corrections of the feature, oldest first. */
+  readonly corrections?: ReadonlyArray<string> | undefined
+  /** Current card, when it is being corrected rather than written from scratch. */
+  readonly current?: CardContent | null | undefined
 }): string =>
   [
     `Feature: ${input.feature.name}`,
@@ -111,5 +117,11 @@ export const renderCard = (input: {
           "",
           "Other files of the feature (not shown, do not cite them):",
           ...input.omitted.map((file) => `- ${file.path}${file.summary === null ? "" : `: ${file.summary}`}`)
-        ])
+        ]),
+    ...(input.current === undefined || input.current === null
+      ? []
+      : ["", "Current card (update it; keep what is still correct):", JSON.stringify(input.current)]),
+    ...(input.corrections === undefined || input.corrections.length === 0
+      ? []
+      : ["", "Reviewer corrections:", ...input.corrections.map((text, i) => `${i + 1}. ${text}`)])
   ].join("\n")
