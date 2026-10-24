@@ -183,7 +183,10 @@ flowchart LR
 | `finalize`          | Counts features and cards, `understanding_status = ready`.                                                                                                                                                                                                                                                                                                                                                                    |
 
 - **Streaming**: answers are always streamed and parsed at the end. A non-streamed call to a slow local model would
-  hit the 5-minute limit Node's `fetch` puts on waiting for response headers; with streaming only `AI_TIMEOUT` applies.
+  hit the 5-minute limit Node's `fetch` puts on waiting for response headers. Streaming moves the limit to the first
+  token: on CPU, reading a long input can still take more than 5 minutes before the model answers, so that call fails
+  (`AI_APICallError`, about 300 s in `model_call`) and is retried. Known limitation, to be removed in phase 5.
+  Otherwise only `AI_TIMEOUT` applies.
 - **Budget**: every prompt is sized from `AI_CONTEXT_TOKENS - AI_MAX_OUTPUT_TOKENS` (conservative estimate of 3
   characters per token).
 - **Invalid answers**: the answer is validated with the Effect schema of the prompt; if it does not match, the model

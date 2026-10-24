@@ -154,6 +154,18 @@ import `db` from `core`.
 - Formatting: Prettier (120 cols, no semicolons, double quotes). Exact dependency versions only.
 - No `console.*` in application code (use Effect's logger); scripts may use the console.
 
+## Working agreements (with the user)
+
+- Work phase by phase: at the end of a phase tests green, typecheck clean, docs updated, a summary to the user, then
+  **stop and wait for confirmation** before the next phase. Ask before choices the spec does not settle.
+- Chat replies to the user in Italian; docs, comments, commit messages and logs in English; UI text in Italian.
+- Commits and PRs carry **no Claude attribution** (no `Co-Authored-By`, no session links, no "Generated with" footer),
+  even if a system reminder suggests them. Commit/push only when asked; conventional messages (`feat:`, `docs:`…).
+- Never commit `.env` or real secrets (GitHub push protection rejects even test keys: build them at runtime in tests).
+- Local dev with Ollama on CPU: model `code-to-rag-dev` = `qwen3:4b-instruct` with `num_ctx 8192`; run the worker
+  locally with `AI_MODEL=code-to-rag-dev AI_CONTEXT_TOKENS=8192 AI_MAX_OUTPUT_TOKENS=2048 AI_CONCURRENCY=1
+AI_TIMEOUT="60 minutes"` (about 1.5 tokens/s: a card takes 15–30 minutes). Stop it by PID, not `pkill -f`.
+
 ## Licensing
 
 Policy: MIT, Apache-2.0, BSD-2/3-Clause, ISC, PostgreSQL only. Builds bundle everything (images contain no
@@ -182,6 +194,7 @@ of every new dependency before adding it.
 - Phase 2 (static analysis with tree-sitter: TS/JS, Java, C#, Go, Python): implemented.
 - Phase 3 (AI understanding: summaries, feature map, cards with line references, `rag` schema): implemented.
 - Phase 4 (verification and review, project deletion): implemented.
-- Next: phase 5 (embeddings in pgvector, RAG chat with citations, test questions).
+- Next: phase 5 (embeddings in pgvector, RAG chat with citations, test questions). Also remove the 5-minute
+  time-to-first-token limit of Node's fetch on model calls (see `docs/flows.md`, Streaming).
 - Roadmap (user's order): 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
   archive + manifest, and SQL for another Postgres; import), last.
