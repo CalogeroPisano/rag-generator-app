@@ -12,7 +12,16 @@ import { AppConfig } from "./config.ts"
 import { type Job, JobId, type SnapshotId } from "./domain.ts"
 import { PhaseError } from "./errors.ts"
 import type { PhaseContext, Pipeline } from "./pipeline.ts"
-import { AnalysisRepository, JobRepository, type ParsedFile, SnapshotRepository } from "./ports.ts"
+import {
+  AnalysisRepository,
+  JobRepository,
+  KnowledgeRepository,
+  type ParsedFile,
+  ProjectRepository,
+  SnapshotRepository,
+  UnderstandingRepository
+} from "./ports.ts"
+import { continueNewVersion } from "./updates.ts"
 
 const PARSE_BATCH_SIZE = 100
 const RESOLVE_BATCH_SIZE = 1000
@@ -95,11 +104,22 @@ const completeAnalysis = Effect.fn("analysis.finalize")(
   function* (job: Job) {
     const repository = yield* AnalysisRepository
     yield* repository.complete(job.snapshotId, ANALYZER_VERSION)
+    // A new version moves on to its update (or becomes current).
+    yield* continueNewVersion(job.snapshotId)
   },
   (effect) => effect.pipe(Effect.mapError(toPhaseError("finalize")))
 )
 
-export const analysisPipeline: Pipeline<AnalysisRepository | CodeAnalyzer | JobRepository> = {
+export const analysisPipeline: Pipeline<
+  | AnalysisRepository
+  | AppConfig
+  | CodeAnalyzer
+  | JobRepository
+  | KnowledgeRepository
+  | ProjectRepository
+  | SnapshotRepository
+  | UnderstandingRepository
+> = {
   type: "analysis",
   phases: [
     { name: "parse", run: ({ job, progress }) => parseFiles(job, progress) },

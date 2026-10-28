@@ -76,7 +76,7 @@ const operationLabels = {
 function ReviewPage() {
   const { projectId, featureId } = Route.useParams()
   const { data: summary } = useSuspenseQuery(projectQuery(projectId))
-  const snapshotId = summary.latestSnapshot?.id
+  const snapshotId = summary.currentSnapshot?.id
   if (snapshotId === undefined) {
     return (
       <Empty className="border">
@@ -86,8 +86,22 @@ function ReviewPage() {
       </Empty>
     )
   }
+  // A new version being acquired or updated copies these cards: changes are refused until it is done.
+  const latest = summary.latestSnapshot
+  const updating =
+    latest !== null &&
+    latest.id !== snapshotId &&
+    latest.status !== "failed" &&
+    latest.analysisStatus !== "failed" &&
+    latest.understandingStatus !== "failed"
   return (
-    <Review projectId={projectId} projectName={summary.project.name} snapshotId={snapshotId} featureId={featureId} />
+    <Review
+      projectId={projectId}
+      projectName={summary.project.name}
+      snapshotId={snapshotId}
+      featureId={featureId}
+      updating={updating}
+    />
   )
 }
 
@@ -95,12 +109,14 @@ function Review({
   projectId,
   projectName,
   snapshotId,
-  featureId
+  featureId,
+  updating
 }: {
   projectId: string
   projectName: string
   snapshotId: string
   featureId: string
+  updating: boolean
 }) {
   const queryClient = useQueryClient()
   const map = useQuery({
@@ -198,7 +214,7 @@ function Review({
   const files = [...new Set([...data.feature.files, ...allReferences(data.content).map((r) => r.path)])]
   const shownPath = path ?? files[0]
   const busy = activeJob !== undefined
-  const pending = status.isPending || operation.isPending || correct.isPending || save.isPending
+  const pending = status.isPending || operation.isPending || correct.isPending || save.isPending || updating
 
   const select = (statementId: string, reference: Reference | undefined) => {
     setSelected(statementId)
@@ -234,6 +250,7 @@ function Review({
         actions={
           draft === null ? (
             <div className="flex flex-wrap gap-2">
+              {updating && <Badge variant="info">Aggiornamento alla nuova versione in corso</Badge>}
               {busy && (
                 <Badge variant="info">
                   <Spinner data-icon="inline-start" />

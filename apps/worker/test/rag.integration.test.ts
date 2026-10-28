@@ -360,6 +360,11 @@ describe.skipIf(url === undefined)("RAG index, chat and tests (PostgreSQL + pgve
     expect(results.every((r) => r.rank !== null && r.verdict === "correct")).toBe(true)
     expect(testRun.retrievalHits).toBe(3)
     expect(testRun.correct).toBe(3)
+    // Runs are listed per project, with the revision of the version they tested.
+    const runs = await run(EvaluationRepository.use((e) => e.runs(snapshotId)))
+    expect(runs.map((r) => [r.id, r.snapshotId])).toEqual([[job.id, snapshotId]])
+    expect(runs[0]?.revision).toBe(testRun.revision)
+    expect(testRun.revision).toMatch(/^[0-9a-f]{64}$/)
 
     // A new understanding re-attaches the questions by feature name.
     await run(requestUnderstanding(snapshotId))

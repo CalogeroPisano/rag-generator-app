@@ -38,7 +38,7 @@ export const Route = createFileRoute("/_app/projects/$projectId_/chat")({
 function ChatPage() {
   const { projectId } = Route.useParams()
   const { data: summary } = useSuspenseQuery(projectQuery(projectId))
-  const snapshot = summary.latestSnapshot
+  const snapshot = summary.currentSnapshot
   const ready = snapshot?.understandingStatus === "ready"
 
   return (

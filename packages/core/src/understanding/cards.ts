@@ -77,19 +77,31 @@ const excerptsFor = Effect.fnUntraced(function* (
 })
 
 /**
- * Writes a card for a feature, or updates `current` when given. Reviewer
- * corrections go into the prompt. Returns undefined when no file of the feature
+ * Writes a card for a feature, or updates `current` when given (correction, or
+ * new code in an incremental update). Reviewer corrections go into the prompt. Returns undefined when no file of the feature
  * can be shown (nothing to write from).
  */
 export const writeCard = Effect.fnUntraced(function* (
   context: CallContext,
   feature: CardFeature,
   sources: CardSources,
-  options: { readonly current: CardContent | null; readonly corrections: ReadonlyArray<string> }
+  options: {
+    readonly current: CardContent | null
+    readonly corrections: ReadonlyArray<string>
+    /** Incremental update: files of the feature that changed since `current` was written. */
+    readonly changedFiles?: ReadonlyArray<string> | undefined
+  }
 ) {
   const model = yield* LanguageModel
   const header = estimateTokens(
-    renderCard({ feature, excerpts: [], omitted: [], corrections: options.corrections, current: options.current })
+    renderCard({
+      feature,
+      excerpts: [],
+      omitted: [],
+      corrections: options.corrections,
+      current: options.current,
+      changedFiles: options.changedFiles
+    })
   )
   const { excerpts, omitted, shown } = yield* excerptsFor(
     context,
@@ -107,7 +119,8 @@ export const writeCard = Effect.fnUntraced(function* (
       excerpts: excerpts.map(renderCardExcerpt),
       omitted,
       corrections: options.corrections,
-      current: options.current
+      current: options.current,
+      changedFiles: options.changedFiles
     }),
     schema: CardContent
   })

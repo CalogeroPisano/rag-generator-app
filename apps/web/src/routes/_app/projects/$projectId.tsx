@@ -19,9 +19,12 @@ import { FileExplorer, type FileSelection } from "@/components/file-explorer"
 import { JobProgress } from "@/components/job-progress"
 import { PageHeader } from "@/components/page-header"
 import { DeleteProjectDialog } from "@/components/projects/delete-project-dialog"
+import { NewVersionDialog } from "@/components/projects/new-version-dialog"
+import { VersionsCard } from "@/components/projects/versions-card"
 import { IndexStatusCard } from "@/components/rag/index-status"
 import { AnalysisStatusBadge, SnapshotStatusBadge, UnderstandingStatusBadge } from "@/components/status-badge"
 import { FeaturesPanel } from "@/components/understanding/features-panel"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -68,7 +71,7 @@ function Stat({ label, value, hint }: { label: string; value: number; hint?: str
   )
 }
 
-type ProjectTab = "files" | "symbols" | "dependencies" | "features"
+type ProjectTab = "files" | "symbols" | "dependencies" | "features" | "versions"
 
 function AnalysisPending({ status }: { status: string | null }) {
   return (
@@ -112,12 +115,17 @@ function ProjectPage() {
   const { projectId } = Route.useParams()
   const queryClient = useQueryClient()
   const { data: summary } = useSuspenseQuery(projectQuery(projectId))
-  const { project, latestSnapshot: snapshot, latestJob: job } = summary
+  // Pages show the version in use; a newer one is being acquired or updated meanwhile.
+  const { project, currentSnapshot: snapshot, latestSnapshot: latest, latestJob: job } = summary
   const [tab, setTab] = useState<ProjectTab>("files")
   const [selection, setSelection] = useState<FileSelection | undefined>()
 
   // When a job ends, everything derived from the snapshot may have changed.
-  const stream = useJobStream(job?.status === "succeeded" ? undefined : job?.id, String(job?.updatedAt), () => {
+  const stream = useJobStream(job?.status === "succeeded" ? undefined : job?.id, String(job?.updatedAt), (ended) => {
+    // A new version identical to the one in use is discarded by its acquisition.
+    if (ended.type === "acquisition" && ended.status === "succeeded" && ended.progress?.message?.startsWith("Nessun")) {
+      toast.info(ended.progress.message)
+    }
     void queryClient.invalidateQueries()
   })
 
@@ -153,6 +161,12 @@ function ProjectPage() {
   const analysisReady = readySnapshot?.analysisStatus === "ready"
   const understandingReady = readySnapshot?.understandingStatus === "ready"
   const jobActive = job !== null && (job.status === "queued" || job.status === "running")
+  const newVersionPending =
+    latest !== null &&
+    latest.id !== snapshot?.id &&
+    latest.status !== "failed" &&
+    latest.analysisStatus !== "failed" &&
+    latest.understandingStatus !== "failed"
   const files = useQuery({ ...filesQuery(readySnapshot?.id ?? ""), enabled: readySnapshot !== null })
 
   const openFile = (next: FileSelection) => {
@@ -195,6 +209,13 @@ function ProjectPage() {
                 </Button>
               </>
             )}
+            <NewVersionDialog
+              projectId={project.id}
+              sourceType={project.sourceType}
+              repositoryRef={project.repositoryRef}
+              hasCards={understandingReady}
+              disabled={readySnapshot === null || (jobActive && job.type !== "indexing")}
+            />
             <DeleteProjectDialog
               projectId={project.id}
               projectName={project.name}
@@ -203,6 +224,16 @@ function ProjectPage() {
           </>
         }
       />
+
+      {newVersionPending && (
+        <Alert>
+          <AlertTitle>Nuova versione in elaborazione</AlertTitle>
+          <AlertDescription>
+            Fino al termine dell'aggiornamento restano in uso la versione attuale, la chat e i test; revisione e
+            correzioni delle schede riprendono alla fine.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {job !== null && job.status !== "succeeded" && (
         <JobProgress stream={stream} onRetry={() => retry.mutate(job.id)} retrying={retry.isPending} />
@@ -231,7 +262,7 @@ function ProjectPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={jobActive || startAnalysis.isPending}
+                disabled={jobActive || newVersionPending || startAnalysis.isPending}
                 onClick={() => startAnalysis.mutate(readySnapshot.id)}
               >
                 {startAnalysis.isPending ? (
@@ -247,7 +278,13 @@ function ProjectPage() {
                   <span>
                     <Button
                       size="sm"
-                      disabled={!analysisReady || jobActive || generateCards.isPending || ai.data?.configured !== true}
+                      disabled={
+                        !analysisReady ||
+                        jobActive ||
+                        newVersionPending ||
+                        generateCards.isPending ||
+                        ai.data?.configured !== true
+                      }
                       onClick={() => generateCards.mutate(readySnapshot.id)}
                     >
                       {generateCards.isPending ? (
@@ -293,6 +330,7 @@ function ProjectPage() {
               <TabsTrigger value="symbols">Simboli</TabsTrigger>
               <TabsTrigger value="dependencies">Dipendenze</TabsTrigger>
               <TabsTrigger value="features">Funzionalità</TabsTrigger>
+              <TabsTrigger value="versions">Versioni</TabsTrigger>
             </TabsList>
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <ShieldCheckIcon className="size-3.5" /> Contenuto mostrato già mascherato
@@ -345,6 +383,9 @@ function ProjectPage() {
             ) : (
               <UnderstandingPending status={readySnapshot.understandingStatus} />
             )}
+          </TabsContent>
+          <TabsContent value="versions">
+            <VersionsCard projectId={projectId} currentId={readySnapshot.id} />
           </TabsContent>
         </Tabs>
       )}

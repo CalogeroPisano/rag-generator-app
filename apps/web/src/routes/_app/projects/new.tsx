@@ -15,38 +15,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createProjectFn } from "@/functions/projects.functions"
 import { formText } from "@/lib/form"
 import { formatBytes } from "@/lib/format"
+import { uploadArchive } from "@/lib/upload"
 
 export const Route = createFileRoute("/_app/projects/new")({
   head: () => ({ meta: [{ title: "Nuovo progetto · Code-to-RAG" }] }),
   component: NewProjectPage
 })
-
-/**
- * Sends the archive as the raw request body. XMLHttpRequest (rather than
- * fetch) is used because it reports upload progress.
- */
-const uploadArchive = (file: File, onProgress: (fraction: number) => void) =>
-  new Promise<string>((resolve, reject) => {
-    const request = new XMLHttpRequest()
-    request.open("POST", "/api/uploads")
-    request.setRequestHeader("Content-Type", "application/zip")
-    request.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(event.loaded / event.total)
-    }
-    request.onload = () => {
-      const body = (() => {
-        try {
-          return JSON.parse(request.responseText) as { uploadId?: string; error?: string }
-        } catch {
-          return {}
-        }
-      })()
-      if (request.status === 201 && body.uploadId !== undefined) resolve(body.uploadId)
-      else reject(new Error(body.error ?? "Caricamento non riuscito"))
-    }
-    request.onerror = () => reject(new Error("Connessione interrotta durante il caricamento"))
-    request.send(file)
-  })
 
 function NewProjectPage() {
   const navigate = useNavigate()

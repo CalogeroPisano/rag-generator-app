@@ -41,7 +41,7 @@ export const Route = createFileRoute("/_app/projects/$projectId_/tests")({
 function TestsPage() {
   const { projectId } = Route.useParams()
   const { data: summary } = useSuspenseQuery(projectQuery(projectId))
-  const snapshot = summary.latestSnapshot
+  const snapshot = summary.currentSnapshot
   return (
     <>
       <PageHeader

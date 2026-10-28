@@ -7,10 +7,11 @@ a vector database that powers a RAG chatbot.
 
 Commercially distributable product, installed **on premise** with Docker Compose.
 
-> **Status:** phases 1–5 of 7 completed (source acquisition, static analysis, AI understanding, review, RAG chat).
+> **Status:** phases 1–6 of 7 completed (source acquisition, static analysis, AI understanding, review, RAG chat,
+> incremental updates).
 > See [Roadmap](#roadmap).
 
-## Available features (phases 1–5)
+## Available features (phases 1–6)
 
 - **Acquisition** from a zip archive (streamed upload) or a Git repository, including private ones with a read-only
   token (stored encrypted).
@@ -42,6 +43,12 @@ Commercially distributable product, installed **on premise** with Docker Compose
 - **Test questions**: generated from the cards (with the expected answer) or written by reviewers, kept across
   regenerations; test runs measure whether the right card is found (hit rate, first place, MRR) and let the model
   judge each answer.
+- **New versions of the code** ("Nuova versione": a new archive, or the latest commit of the branch): only what
+  changed goes back to the model. Unchanged summaries and cards are reused with their review and index; the cards of
+  changed files are updated from the previous ones (reviewed cards return "to be checked again"); new files are
+  assigned to existing or new features. The previous version stays in use until the update is complete; the last
+  versions are kept (`SNAPSHOT_RETENTION`), test runs of different versions can be compared, a version with no
+  changes is not created.
 - **Project deletion**, with everything it produced (knowledge base, index, tests and conversations included).
 - **Model call log**: phase, model, duration, tokens and outcome of every call, never the code.
 - **Web interface**: login, project list, new project, job progress, file tree with exclusions, code viewer
@@ -112,8 +119,8 @@ docs/         architecture and flow documentation
 ## Documentation
 
 - [Architecture](docs/architecture.md): components, packages, technologies, decisions
-- [Flows](docs/flows.md): acquisition, static analysis, AI understanding, review, index, chat, test questions, jobs
-  and phases, progress, authentication
+- [Flows](docs/flows.md): acquisition, static analysis, AI understanding, review, index, chat, test questions, new
+  versions, jobs and phases, progress, authentication
 - [Data model](docs/data-model.md): application tables and the `rag` schema
 - [Security](docs/security.md): masking, extraction, tokens, web protections
 - [Installation and configuration](docs/installation.md): Docker Compose, environment variables, operations
@@ -126,7 +133,7 @@ docs/         architecture and flow documentation
 3. **AI understanding**: summaries, feature map, card generation with line references — completed
 4. **Automated verification and assisted review; project deletion** — completed
 5. **Indexing in pgvector, RAG chat with citations, test questions** — completed
-6. Incremental updates on new versions of the code
+6. **Incremental updates on new versions of the code** — completed
 7. Per-project knowledge export (archive + SQL) and import
 
 ## Third-party licenses

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm"
 import {
+  type AnyPgColumn,
   bigint,
   bigserial,
   boolean,
@@ -34,6 +35,13 @@ export const project = pgTable(
     /** AES-256-GCM sealed token (see SecretBox); never plain text. */
     encryptedToken: text("encrypted_token"),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    /**
+     * Version shown by the pages and used by the chat and the tests. A new version becomes current when its update
+     * is complete (phase 6); until then the previous one stays in use.
+     */
+    currentSnapshotId: uuid("current_snapshot_id").references((): AnyPgColumn => snapshot.id, {
+      onDelete: "set null"
+    }),
     createdAt: createdAt()
   },
   (table) => [check("project_source_type_check", sql`${table.sourceType} in ('zip', 'git')`)]
@@ -64,6 +72,13 @@ export const snapshot = pgTable(
     understoodAt: timestamp("understood_at", { withTimezone: true }),
     featureCount: integer("feature_count").notNull().default(0),
     cardCount: integer("card_count").notNull().default(0),
+    /** Version this one was updated from (incremental update); null for the first version. */
+    baseSnapshotId: uuid("base_snapshot_id").references((): AnyPgColumn => snapshot.id, { onDelete: "set null" }),
+    /** What changed from the base version: files at the analysis, cards at the end of the update. */
+    changes: jsonb("changes").$type<{
+      files: { added: number; modified: number; removed: number }
+      cards: { kept: number; updated: number; created: number; removed: number } | null
+    }>(),
     createdAt: createdAt(),
     updatedAt: updatedAt()
   },

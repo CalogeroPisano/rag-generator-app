@@ -24,6 +24,7 @@ import { checkReferences } from "./understanding/references.ts"
 import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { uploadPath } from "./acquisition.ts"
 import { requestIndexing } from "./rag/indexing.ts"
+import { ensureNotUpdating } from "./updates.ts"
 
 /** The feature of a card job and its current card (looked up by feature: regeneration replaces the card id). */
 const featureWithCard = Effect.fnUntraced(function* (snapshotId: SnapshotId, featureId: string) {
@@ -136,6 +137,7 @@ export const cardPipeline: Pipeline<
 
 const ensureNoUnderstanding = Effect.fnUntraced(function* (projectId: ProjectId) {
   const jobs = yield* JobRepository
+  yield* ensureNotUpdating(projectId)
   const active = yield* jobs.active(projectId)
   if (active.some((job) => job.type === "understanding")) {
     return yield* new InvalidInputError({ message: "La comprensione con IA è in corso: riprova al termine" })
@@ -202,6 +204,8 @@ export const editCard = Effect.fn("editCard")(function* (
 ) {
   const knowledge = yield* KnowledgeRepository
   const snapshots = yield* SnapshotRepository
+  const { snapshot } = yield* snapshots.get(snapshotId)
+  yield* ensureNotUpdating(snapshot.projectId)
   const files = yield* snapshots.listFiles(snapshotId)
   const shown = new Map(
     files
@@ -220,6 +224,9 @@ export const setCardStatus = Effect.fn("setCardStatus")(function* (
   reviewer: Reviewer
 ) {
   const knowledge = yield* KnowledgeRepository
+  const snapshots = yield* SnapshotRepository
+  const { snapshot } = yield* snapshots.get(snapshotId)
+  yield* ensureNotUpdating(snapshot.projectId)
   yield* knowledge.setCardStatus(snapshotId, cardId, status, reviewer)
 })
 

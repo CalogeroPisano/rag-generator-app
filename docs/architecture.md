@@ -65,7 +65,7 @@ flowchart BT
 | Package             | Responsibility                                                                                                                                                                                                                                                                                                                  |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/analysis` | Acquisition primitives with no application state: safe zip reading, Git clone, file classification, language detection, credential masking, tree scanning; tree-sitter parsing (symbols, imports) and import resolution.                                                                                                        |
-| `packages/core`     | Domain: Effect schemas (entities, inputs), typed errors, configuration, secret encryption, repository **ports**, pipeline engine, acquisition, analysis, understanding, indexing and test pipelines, RAG retrieval and chat, use cases.                                                                                         |
+| `packages/core`     | Domain: Effect schemas (entities, inputs), typed errors, configuration, secret encryption, repository **ports**, pipeline engine, acquisition, analysis, understanding (full and incremental), indexing and test pipelines, RAG retrieval and chat, versions of the code, use cases.                                            |
 | `packages/db`       | Implementation of the ports with Drizzle and `pg`, schema and migrations, `LISTEN/NOTIFY` listener, test support.                                                                                                                                                                                                               |
 | `packages/ai`       | AI layer: `LanguageModel` (structured answers with schema validation and one correction request, streamed text answers) and `EmbeddingModel` services over the AI SDK (OpenAI-compatible provider) with retry, timeout and concurrency limit; `AiConfig`; `ModelCallRecorder` port; versioned prompts and their output schemas. |
 | `apps/web`          | Interface and HTTP API.                                                                                                                                                                                                                                                                                                         |
@@ -109,34 +109,40 @@ the persistence technology, and the dependency always goes from `db` to `core`, 
 
 ## Decisions
 
-| Decision                                                  | Rationale                                                                                                                    |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Drizzle instead of `@effect/sql-pg`                       | In Effect 4.0.5 the SQL modules, drivers and platform integrations are marked unstable; only stable APIs are used.           |
-| Job queue in PostgreSQL (`FOR UPDATE SKIP LOCKED`)        | No extra infrastructure on premise; consistent transactions between job state and events.                                    |
-| File contents in PostgreSQL (`source_blob`, deduplicated) | A single store to back up; groundwork for incremental updates; no source files on disk after acquisition.                    |
-| `LISTEN/NOTIFY` for progress                              | Real-time updates without a broker; the events table remains the source of truth.                                            |
-| isomorphic-git                                            | No (GPL) git binary in the images; the token only goes through the authentication callback.                                  |
-| Full bundles for web and worker                           | Small images, exact license check on what is distributed.                                                                    |
-| srvx as the production server                             | Nitro 3 is still in beta.                                                                                                    |
-| Better Auth                                               | Product owner's choice; telemetry disabled.                                                                                  |
-| tree-sitter via WebAssembly                               | Same build everywhere (no native compilation); grammars ship as `.wasm` assets in the worker image (`GRAMMARS_DIR`).         |
-| Native dependency targets (file, directory, namespace)    | Go packages, Java wildcard imports and C# namespaces do not map to a single file; nothing is invented.                       |
-| Analysis as a separate job                                | Can be re-run on its own (new analyzer version) without re-acquiring the code.                                               |
-| AI knowledge in a separate `rag` schema, no foreign keys  | Product owner's choice: the knowledge base can be read, exported or moved on its own; the application deletes it explicitly. |
-| Summaries and cards in English                            | Product owner's choice; prompts are in English too.                                                                          |
-| Understanding started manually, as its own job            | It costs model time: the user decides when; it can be re-run without re-acquiring or re-analyzing.                           |
-| Own validation and correction loop around the AI SDK      | Effect Schema validates the answer; one correction request, then a typed error; every HTTP call is logged.                   |
-| Verification automatic and on demand                      | Every card is checked against the code before anyone reviews it; a reviewer can re-check after a change.                     |
-| Card operations as jobs (`card`, one per card)            | Model calls take minutes on modest hardware; the page polls the job and refreshes the card.                                  |
-| Corrections tied to the feature name                      | Product owner's choice: they survive regenerations and new feature maps; unmatched ones stay visible as orphans.             |
-| Project deletion refused while a job runs                 | Avoids a worker writing to a deleted project; queued jobs are deleted with it.                                               |
-| Interface in Italian; code, docs and logs in English      | Italian end users; code, documentation and logs are for developers and operators.                                            |
-| Index of all cards but the excluded ones                  | Product owner's choice: the chat is usable during the review; each source shows its review state; "approved only" filter.    |
-| Chat in the web process, streamed (SSE)                   | Product owner's choice: answers appear while they are written; conversations are stored per user.                            |
-| Multilingual embeddings + hybrid search                   | Product owner's choice: cards are in English, questions may be in Italian; full-text finds exact names, codes and messages.  |
-| Exact vector search, no ANN index                         | A project has hundreds to a few thousand chunks: a filtered sequential scan is fast and exact, and any dimension works.      |
-| Test questions generated and manual, judged by the model  | Product owner's choice: retrieval measured (hit, rank, MRR), answers judged against the expected card.                       |
-| undici `fetch` for model calls                            | Node's fetch gives up after 5 minutes without response headers; models on CPU can take longer to start answering.            |
+| Decision                                                  | Rationale                                                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Drizzle instead of `@effect/sql-pg`                       | In Effect 4.0.5 the SQL modules, drivers and platform integrations are marked unstable; only stable APIs are used.             |
+| Job queue in PostgreSQL (`FOR UPDATE SKIP LOCKED`)        | No extra infrastructure on premise; consistent transactions between job state and events.                                      |
+| File contents in PostgreSQL (`source_blob`, deduplicated) | A single store to back up; versions share unchanged files and are compared by hash; no source files on disk after acquisition. |
+| `LISTEN/NOTIFY` for progress                              | Real-time updates without a broker; the events table remains the source of truth.                                              |
+| isomorphic-git                                            | No (GPL) git binary in the images; the token only goes through the authentication callback.                                    |
+| Full bundles for web and worker                           | Small images, exact license check on what is distributed.                                                                      |
+| srvx as the production server                             | Nitro 3 is still in beta.                                                                                                      |
+| Better Auth                                               | Product owner's choice; telemetry disabled.                                                                                    |
+| tree-sitter via WebAssembly                               | Same build everywhere (no native compilation); grammars ship as `.wasm` assets in the worker image (`GRAMMARS_DIR`).           |
+| Native dependency targets (file, directory, namespace)    | Go packages, Java wildcard imports and C# namespaces do not map to a single file; nothing is invented.                         |
+| Analysis as a separate job                                | Can be re-run on its own (new analyzer version) without re-acquiring the code.                                                 |
+| AI knowledge in a separate `rag` schema, no foreign keys  | Product owner's choice: the knowledge base can be read, exported or moved on its own; the application deletes it explicitly.   |
+| Summaries and cards in English                            | Product owner's choice; prompts are in English too.                                                                            |
+| Understanding started manually, as its own job            | It costs model time: the user decides when; it can be re-run without re-acquiring or re-analyzing.                             |
+| Own validation and correction loop around the AI SDK      | Effect Schema validates the answer; one correction request, then a typed error; every HTTP call is logged.                     |
+| Verification automatic and on demand                      | Every card is checked against the code before anyone reviews it; a reviewer can re-check after a change.                       |
+| Card operations as jobs (`card`, one per card)            | Model calls take minutes on modest hardware; the page polls the job and refreshes the card.                                    |
+| Corrections tied to the feature name                      | Product owner's choice: they survive regenerations and new feature maps; unmatched ones stay visible as orphans.               |
+| Project deletion refused while a job runs                 | Avoids a worker writing to a deleted project; queued jobs are deleted with it.                                                 |
+| Interface in Italian; code, docs and logs in English      | Italian end users; code, documentation and logs are for developers and operators.                                              |
+| Index of all cards but the excluded ones                  | Product owner's choice: the chat is usable during the review; each source shows its review state; "approved only" filter.      |
+| Chat in the web process, streamed (SSE)                   | Product owner's choice: answers appear while they are written; conversations are stored per user.                              |
+| Multilingual embeddings + hybrid search                   | Product owner's choice: cards are in English, questions may be in Italian; full-text finds exact names, codes and messages.    |
+| Exact vector search, no ANN index                         | A project has hundreds to a few thousand chunks: a filtered sequential scan is fast and exact, and any dimension works.        |
+| Test questions generated and manual, judged by the model  | Product owner's choice: retrieval measured (hit, rank, MRR), answers judged against the expected card.                         |
+| undici `fetch` for model calls                            | Node's fetch gives up after 5 minutes without response headers; models on CPU can take longer to start answering.              |
+| New versions started manually, updated automatically      | Product owner's choice: "Nuova versione" acquires the code; the update of summaries and cards follows on its own.              |
+| Incremental update as an `understanding` job with a base  | Same phases as a full understanding: unchanged summaries and cards are copied, only what changed goes to the model.            |
+| Incremental feature map                                   | Product owner's choice: features stay (with their cards, corrections and questions); new and changed files are assigned.       |
+| Changed cards rewritten from the previous one             | Product owner's choice: reviewed cards return to `needs_recheck`; unchanged cards keep their review, verification, index.      |
+| Version in use (`project.current_snapshot_id`)            | Chat, tests and review keep working on the previous version until the update is complete; then it is replaced.                 |
+| Last N versions kept (`SNAPSHOT_RETENTION`)               | Product owner's choice: older versions are deleted when a new one becomes current; corrections and test questions stay.        |
 
 ## Ready for durable workflows
 

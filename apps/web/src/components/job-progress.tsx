@@ -55,7 +55,7 @@ export function JobProgress({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{jobTypes[job.type].title}</CardTitle>
+        <CardTitle>{job.update ? "Aggiornamento alla nuova versione" : jobTypes[job.type].title}</CardTitle>
         <CardDescription>
           Tentativo {Math.max(job.attempts, 1)} di {job.maxAttempts}
         </CardDescription>

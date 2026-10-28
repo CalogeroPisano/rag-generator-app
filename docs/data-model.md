@@ -33,6 +33,7 @@ erDiagram
     text repository_username
     text encrypted_token "AES-256-GCM"
     text created_by FK
+    uuid current_snapshot_id FK "version in use"
     timestamptz created_at
   }
   snapshot {
@@ -50,6 +51,8 @@ erDiagram
     timestamptz analyzed_at
     int symbol_count
     int dependency_count
+    uuid base_snapshot_id FK "previous version (set null)"
+    jsonb changes "{files, cards} vs the base"
   }
   source_file {
     bigint id PK
@@ -148,12 +151,17 @@ The `user`, `session`, `account` and `verification` tables belong to Better Auth
 - **project**: the Git token is always encrypted with `APP_ENCRYPTION_KEY` and bound to the project id (a value copied
   to another project cannot be decrypted).
 - **snapshot**: an acquired version of the code. It is identified by the commit for Git and by the hash of the
-  original tree (paths + content hashes) for zips.
+  original tree (paths + content hashes) for zips. `base_snapshot_id` is the version a new one is updated from;
+  `changes` records the included files added, modified and removed with respect to it (`files`, after the static
+  analysis) and the cards kept, updated, created and removed by the update (`cards`, at its end).
+- **project.current_snapshot_id**: the version in use (pages, chat, tests). The first version is current from the
+  start; a new one becomes current when its update is complete. Older versions beyond `SNAPSHOT_RETENTION` are then
+  deleted.
 - **source_file**: a file or an excluded directory. Excluded files only have metadata and a reason; excluded
   directories (`node_modules`, `dist`…) are a single entry with `is_directory = true`. `secrets` holds the rule and
   line of each masked credential, never the value.
-- **source_blob**: masked contents, deduplicated by hash across snapshots and projects. Groundwork for incremental
-  updates (phase 6).
+- **source_blob**: masked contents, deduplicated by hash across snapshots and projects: versions share their
+  unchanged files, and are compared by these hashes.
 - **snapshot (analysis columns)**: `analysis_status` is null until an analysis job is queued. `analyzer_version`
   records the version of the extraction rules (`ANALYZER_VERSION`), so snapshots analyzed with older rules can be
   recognised and re-analyzed. `symbol_count` and `dependency_count` are totals computed at the end of the analysis.
@@ -263,6 +271,7 @@ erDiagram
     uuid snapshot_id FK
     uuid feature_id FK "unique"
     text status "generated | flagged | in_review | approved | excluded | needs_recheck"
+    text change "kept | updated | created (incremental update)"
     text title
     text summary
     jsonb content "CardContent"
@@ -362,7 +371,11 @@ erDiagram
 
 - **card.content** is the structured card (`CardContent` in `packages/ai/src/prompts/card.ts`): title, summary and the
   sections `behavior`, `configuration`, `parameters`, `limits`, `validationRules`, `errors`; every item carries its
-  references. **card_reference** holds one row per cited range, for queries by file (phase 6).
+  references. **card_reference** holds one row per cited range, for queries by file.
+- **card.change**: how the last incremental update produced the card: `kept` (copied from the previous version, with
+  its review, verification, references and index chunks), `updated` (rewritten from the previous card for new code),
+  `created` (new feature); null when written by a full understanding. `version` continues across versions of the
+  code.
 - `unreferenced_statements` counts statements left without a valid reference; they count as verification issues.
 - **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`.
 - **correction**: reviewer corrections. They do not cascade from `rag.snapshot`: they belong to the project and to a
@@ -384,6 +397,9 @@ erDiagram
 ## Tables of the next phases
 
 Phase 7 adds no tables: it exports the `rag` data of a project.
+
+Each version of the code has its own `rag.snapshot` with its summaries, features, cards and chunks; the copies made by
+an incremental update are full rows, so that a version can be read, exported or deleted on its own.
 
 The `job` table also has `payload` (input of `card` jobs) and `dedupe_key` (one active job per card).
 

@@ -147,6 +147,28 @@ const card = (n: number, status: ChatSource["status"] = "generated"): ContextCar
   content: content(`Card ${n}`)
 })
 
+const snapshot = new Snapshot({
+  id: snapshotId,
+  projectId,
+  status: "ready",
+  commitSha: null,
+  contentHash: "hash",
+  includedFiles: 1,
+  excludedFiles: 0,
+  maskedSecrets: 0,
+  analysisStatus: "ready",
+  analyzedAt: new Date(),
+  symbolCount: 0,
+  dependencyCount: 0,
+  understandingStatus: "ready",
+  understoodAt: new Date(),
+  featureCount: 3,
+  cardCount: 3,
+  baseSnapshotId: null,
+  changes: null,
+  createdAt: new Date()
+})
+
 const summary = new ProjectSummary({
   project: new Project({
     id: projectId,
@@ -158,25 +180,8 @@ const summary = new ProjectSummary({
     createdBy: null,
     createdAt: new Date()
   }),
-  latestSnapshot: new Snapshot({
-    id: snapshotId,
-    projectId,
-    status: "ready",
-    commitSha: null,
-    contentHash: "hash",
-    includedFiles: 1,
-    excludedFiles: 0,
-    maskedSecrets: 0,
-    analysisStatus: "ready",
-    analyzedAt: new Date(),
-    symbolCount: 0,
-    dependencyCount: 0,
-    understandingStatus: "ready",
-    understoodAt: new Date(),
-    featureCount: 3,
-    cardCount: 3,
-    createdAt: new Date()
-  }),
+  currentSnapshot: snapshot,
+  latestSnapshot: snapshot,
   latestJob: null
 })
 
@@ -233,6 +238,8 @@ const makeLayer = (options: {
     ProjectRepository,
     ProjectRepository.of({
       createWithAcquisition: () => Effect.die("unused"),
+      createSnapshot: () => Effect.die("unused"),
+      setCurrentSnapshot: () => Effect.die("unused"),
       list: Effect.die("unused"),
       get: () => Effect.succeed(summary),
       getGitSource: () => Effect.die("unused"),

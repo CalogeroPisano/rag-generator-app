@@ -6,6 +6,17 @@ import type { FeatureMapOutput, FeatureMergeOutput } from "@code-to-rag/ai"
 import type { FeatureSymbol } from "../domain.ts"
 import type { Declaration, NewFeature } from "../ports.ts"
 
+/**
+ * Key that identifies a feature across feature maps (corrections, test questions, incremental updates): case,
+ * spacing and punctuation ignored.
+ */
+export const featureKey = (name: string): string =>
+  name
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+
 const normalizePath = (path: string): string => path.trim().replace(/^\.?\//, "")
 
 const lastSegment = (qualifiedName: string): string => qualifiedName.slice(qualifiedName.lastIndexOf(".") + 1)

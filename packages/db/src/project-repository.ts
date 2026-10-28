@@ -1,5 +1,5 @@
 import { NotFoundError, ProjectId, ProjectRepository, ProjectSummary, UploadId } from "@code-to-rag/core"
-import { desc, inArray, sql } from "drizzle-orm"
+import { desc, eq, inArray, sql } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { Database, query } from "./client.ts"
 import { appendJobEvent } from "./job-repository.ts"
@@ -11,7 +11,7 @@ export const ProjectRepositoryLive = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database
 
-    /** Loads projects with their latest snapshot and job (DISTINCT ON keeps one row per project). */
+    /** Loads projects with their current and latest snapshot and latest job (DISTINCT ON keeps one row per project). */
     const summaries = Effect.fnUntraced(function* (ids: ReadonlyArray<string> | "all") {
       const projects = yield* query("project.list", () => {
         const base = db.select().from(project)
@@ -26,6 +26,17 @@ export const ProjectRepositoryLive = Layer.effect(
           .where(inArray(snapshot.projectId, projectIds))
           .orderBy(snapshot.projectId, desc(snapshot.createdAt))
       )
+      const currentIds = projects.flatMap((row) =>
+        row.currentSnapshotId === null || snapshots.some((s) => s.id === row.currentSnapshotId)
+          ? []
+          : [row.currentSnapshotId]
+      )
+      const current =
+        currentIds.length === 0
+          ? []
+          : yield* query("project.currentSnapshots", () =>
+              db.select().from(snapshot).where(inArray(snapshot.id, currentIds))
+            )
       const jobs = yield* query("project.latestJobs", () =>
         db
           .selectDistinctOn([job.projectId])
@@ -36,9 +47,11 @@ export const ProjectRepositoryLive = Layer.effect(
       return yield* Effect.forEach(projects, (row) =>
         Effect.gen(function* () {
           const latestSnapshot = snapshots.find((s) => s.projectId === row.id)
+          const currentSnapshot = [...snapshots, ...current].find((s) => s.id === row.currentSnapshotId)
           const latestJob = jobs.find((j) => j.projectId === row.id)
           return new ProjectSummary({
             project: yield* projectFromRow(row),
+            currentSnapshot: currentSnapshot === undefined ? null : yield* snapshotFromRow(currentSnapshot),
             latestSnapshot: latestSnapshot === undefined ? null : yield* snapshotFromRow(latestSnapshot),
             latestJob: latestJob === undefined ? null : yield* jobFromRow(latestJob)
           })
@@ -72,6 +85,11 @@ export const ProjectRepositoryLive = Layer.effect(
               status: "pending",
               uploadId: input.uploadId
             })
+            // The first version is the current one from the start.
+            await tx
+              .update(project)
+              .set({ currentSnapshotId: input.snapshotId })
+              .where(eq(project.id, input.project.id))
             await tx.insert(job).values({
               id: input.jobId,
               type: "acquisition",
@@ -86,6 +104,35 @@ export const ProjectRepositoryLive = Layer.effect(
         // The project was just inserted in the same connection pool: not finding it is a bug.
         return yield* get(input.project.id).pipe(Effect.catchTag("NotFoundError", Effect.die))
       }),
+
+      createSnapshot: Effect.fnUntraced(function* (input) {
+        yield* query("project.createSnapshot", () =>
+          db.transaction(async (tx) => {
+            await tx.insert(snapshot).values({
+              id: input.snapshotId,
+              projectId: input.projectId,
+              status: "pending",
+              uploadId: input.uploadId,
+              baseSnapshotId: input.baseSnapshotId
+            })
+            await tx.insert(job).values({
+              id: input.jobId,
+              type: "acquisition",
+              projectId: input.projectId,
+              snapshotId: input.snapshotId,
+              status: "queued",
+              maxAttempts: input.maxAttempts
+            })
+            await appendJobEvent(tx, input.jobId, "queued")
+          })
+        )
+        return yield* get(input.projectId).pipe(Effect.catchTag("NotFoundError", Effect.die))
+      }),
+
+      setCurrentSnapshot: (id, snapshotId) =>
+        query("project.setCurrentSnapshot", () =>
+          db.update(project).set({ currentSnapshotId: snapshotId }).where(eq(project.id, id))
+        ).pipe(Effect.asVoid),
 
       list: summaries("all"),
 

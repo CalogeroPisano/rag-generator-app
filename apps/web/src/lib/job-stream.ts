@@ -17,6 +17,8 @@ export interface JobStateWire {
   readonly maxAttempts: number
   readonly lastError: string | null
   readonly progress: JobProgressWire | null
+  /** Understanding job that updates a new version from the previous one. */
+  readonly update: boolean
 }
 
 export interface JobEventWire {

@@ -143,6 +143,11 @@ export const card = rag.table(
     version: integer("version").notNull().default(1),
     /** Statements without any valid reference (candidates for verification). */
     unreferencedStatements: integer("unreferenced_statements").notNull().default(0),
+    /**
+     * How an incremental update produced the card: `kept` (copied, code unchanged), `updated` (rewritten from the
+     * previous version) or `created` (new feature). Null when written by a full understanding.
+     */
+    change: text("change"),
     /** Last manual edit or review decision (name copied: no link to the application's users). */
     reviewedBy: text("reviewed_by"),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
@@ -160,7 +165,8 @@ export const card = rag.table(
     check(
       "rag_card_status_check",
       sql`${table.status} in ('generated', 'flagged', 'in_review', 'approved', 'excluded', 'needs_recheck')`
-    )
+    ),
+    check("rag_card_change_check", sql`${table.change} is null or ${table.change} in ('kept', 'updated', 'created')`)
   ]
 )
 

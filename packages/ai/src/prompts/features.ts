@@ -105,3 +105,39 @@ export const renderFeatureMerge = (
       (candidate, index) => `${index + 1}. ${candidate.name}: ${candidate.description} (${candidate.files} files)`
     )
   ].join("\n")
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Incremental update of the feature map: the existing features stay; new and
+ * changed files are attached to them or form new features. The answer has the
+ * same shape as the feature map.
+ */
+export const FEATURE_UPDATE: PromptRef = { id: "feature-update", version: 1 }
+
+export const featureUpdateInstructions = [
+  "You document a software application for its end users, starting from its source code.",
+  "The application changed: some files are new or were modified. Its current features are listed.",
+  "For each listed file, decide which features it implements:",
+  "- for an existing feature, return it with exactly the same name and only the listed files that belong to it;",
+  "- for a user-level capability that no existing feature covers, return a new feature with a short name and",
+  "  description.",
+  "Do not return existing features that none of the listed files belong to. Ignore build scripts, tests and pure",
+  "infrastructure. Use only file paths and declaration names that appear in the input.",
+  COMMON_RULES
+].join("\n")
+
+export const renderFeatureUpdate = (input: {
+  readonly projectSummary: string | null
+  readonly features: ReadonlyArray<{ readonly name: string; readonly description: string }>
+  /** Pre-rendered with `renderFeatureMapFile`, so that callers can size batches. */
+  readonly files: ReadonlyArray<string>
+}): string =>
+  [
+    ...(input.projectSummary === null ? [] : ["Application overview:", input.projectSummary, ""]),
+    "Existing features:",
+    ...input.features.map((feature) => `- ${feature.name}: ${feature.description}`),
+    "",
+    "New or modified files:",
+    ...input.files
+  ].join("\n")

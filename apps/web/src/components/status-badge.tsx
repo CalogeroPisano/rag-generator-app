@@ -107,3 +107,19 @@ export function CardStatusBadge({ status }: { status: CardStatus }) {
   const { label, variant } = cardStatus[status]
   return <Badge variant={variant}>{label}</Badge>
 }
+
+const cardChange = {
+  updated: { label: "Aggiornata", hint: "Riscritta per il codice della nuova versione" },
+  created: { label: "Nuova", hint: "Funzionalità comparsa nella nuova versione" }
+} as const
+
+/** How the last update produced the card; nothing for cards copied unchanged or written by a full generation. */
+export function CardChangeBadge({ change }: { change: "kept" | "updated" | "created" | null }) {
+  if (change === null || change === "kept") return null
+  const { label, hint } = cardChange[change]
+  return (
+    <Badge variant="outline" title={hint}>
+      {label}
+    </Badge>
+  )
+}

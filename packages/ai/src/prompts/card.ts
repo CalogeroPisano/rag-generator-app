@@ -7,7 +7,7 @@ import { Schema } from "effect"
 import type { PromptRef } from "../language-model.ts"
 import { COMMON_RULES, numberLines } from "./format.ts"
 
-export const CARD: PromptRef = { id: "card", version: 3 }
+export const CARD: PromptRef = { id: "card", version: 4 }
 
 // Plain numbers: an integer schema adds ±2^53 bounds that weigh on constrained decoding. Callers round them.
 export const CardReference = Schema.Struct({
@@ -102,8 +102,10 @@ export const renderCard = (input: {
   readonly omitted: ReadonlyArray<{ readonly path: string; readonly summary: string | null }>
   /** Reviewer corrections of the feature, oldest first. */
   readonly corrections?: ReadonlyArray<string> | undefined
-  /** Current card, when it is being corrected rather than written from scratch. */
+  /** Current card, when it is being corrected or updated rather than written from scratch. */
   readonly current?: CardContent | null | undefined
+  /** Files of the feature that changed since the current card was written (incremental update). */
+  readonly changedFiles?: ReadonlyArray<string> | undefined
 }): string =>
   [
     `Feature: ${input.feature.name}`,
@@ -121,6 +123,15 @@ export const renderCard = (input: {
     ...(input.current === undefined || input.current === null
       ? []
       : ["", "Current card (update it; keep what is still correct):", JSON.stringify(input.current)]),
+    ...(input.changedFiles === undefined || input.changedFiles.length === 0
+      ? []
+      : [
+          "",
+          "The code changed since the current card was written. Changed, added or removed files:",
+          ...input.changedFiles.map((path) => `- ${path}`),
+          "Check every statement and reference of the current card against the excerpts above: line numbers may have",
+          "moved. Remove what no longer holds and add what the new code does."
+        ]),
     ...(input.corrections === undefined || input.corrections.length === 0
       ? []
       : ["", "Reviewer corrections:", ...input.corrections.map((text, i) => `${i + 1}. ${text}`)])

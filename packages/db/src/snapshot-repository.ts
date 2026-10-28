@@ -1,10 +1,10 @@
 import type { PreparedFile } from "@code-to-rag/analysis"
 import { NotFoundError, SnapshotRepository, UploadId, type SnapshotId } from "@code-to-rag/core"
-import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm"
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { Database, query } from "./client.ts"
 import { decodeFileContent, decodeFileEntries, snapshotFromRow } from "./rows.ts"
-import { snapshot, sourceBlob, sourceFile } from "./schema/app.ts"
+import { job, snapshot, sourceBlob, sourceFile } from "./schema/app.ts"
 
 /** Keeps a single INSERT of blobs well below Postgres' message size limits. */
 const MAX_BLOB_BATCH_CHARS = 8 * 1024 * 1024
@@ -129,6 +129,60 @@ export const SnapshotRepositoryLive = Layer.effect(
         if (row === undefined) return yield* new NotFoundError({ entity: "file", id: path })
         return yield* decodeFileContent(row)
       }),
+
+      fileHashes: (id) =>
+        query("snapshot.fileHashes", () =>
+          db
+            .select({ path: sourceFile.path, contentHash: sourceFile.contentHash })
+            .from(sourceFile)
+            .where(
+              and(eq(sourceFile.snapshotId, id), isNull(sourceFile.excludedReason), isNotNull(sourceFile.contentHash))
+            )
+        ).pipe(
+          Effect.map((rows) =>
+            rows.flatMap((row) => (row.contentHash === null ? [] : [{ path: row.path, contentHash: row.contentHash }]))
+          )
+        ),
+
+      saveChanges: (id, changes) => update("snapshot.saveChanges", id, { changes }),
+
+      list: (projectId) =>
+        query("snapshot.list", () =>
+          db.select().from(snapshot).where(eq(snapshot.projectId, projectId)).orderBy(desc(snapshot.createdAt))
+        ).pipe(Effect.flatMap((rows) => Effect.forEach(rows, snapshotFromRow))),
+
+      delete: (ids) =>
+        ids.length === 0
+          ? Effect.succeed({ uploadIds: [] })
+          : query("snapshot.delete", () =>
+              db.transaction(async (tx) => {
+                const uploads = await tx
+                  .select({ uploadId: snapshot.uploadId })
+                  .from(snapshot)
+                  .where(and(inArray(snapshot.id, [...ids]), isNotNull(snapshot.uploadId)))
+                // Blobs are shared (deduplicated by hash): remember these versions', delete the orphans.
+                await tx.execute(sql`
+                  create temporary table deleted_hashes on commit drop as
+                  select distinct ${sourceFile.contentHash} as hash from ${sourceFile}
+                  where ${inArray(sourceFile.snapshotId, [...ids])} and ${sourceFile.contentHash} is not null`)
+                // Files, symbols, dependencies, jobs and events cascade; the model call log keeps its rows.
+                await tx.delete(snapshot).where(inArray(snapshot.id, [...ids]))
+                await tx.execute(sql`
+                  delete from ${sourceBlob} b
+                  using deleted_hashes d
+                  where b.hash = d.hash
+                    and not exists (select 1 from ${sourceFile} f where f.content_hash = b.hash)`)
+                return uploads.flatMap((row) => (row.uploadId === null ? [] : [UploadId.make(row.uploadId)]))
+              })
+            ).pipe(Effect.map((uploadIds) => ({ uploadIds }))),
+
+      discard: (id, baseId) =>
+        query("snapshot.discard", () =>
+          db.transaction(async (tx) => {
+            await tx.update(job).set({ snapshotId: baseId }).where(eq(job.snapshotId, id))
+            await tx.delete(snapshot).where(eq(snapshot.id, id))
+          })
+        ),
 
       pendingUploadIds: query("snapshot.pendingUploadIds", () =>
         db

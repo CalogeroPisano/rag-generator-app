@@ -149,9 +149,13 @@ export function TestRuns({ snapshotId, polling }: { snapshotId: string; polling:
               >
                 <TableCell>
                   <div className="flex flex-col">
-                    <span>{formatDateTime(run.startedAt)}</span>
+                    <span className="flex items-center gap-2">
+                      {formatDateTime(run.startedAt)}
+                      {run.snapshotId !== snapshotId && <Badge variant="outline">Versione precedente</Badge>}
+                    </span>
                     <span className="text-xs text-muted-foreground">
-                      {run.model} · {run.embeddingModel} · prime {run.topK} schede
+                      <span className="font-mono">{run.revision.slice(0, 10)}</span> · {run.model} ·{" "}
+                      {run.embeddingModel} · prime {run.topK} schede
                       {run.approvedOnly ? " · solo approvate" : ""}
                     </span>
                   </div>

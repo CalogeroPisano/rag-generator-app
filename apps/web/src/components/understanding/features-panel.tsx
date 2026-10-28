@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ClipboardCheckIcon, FileIcon, SparklesIcon } from "lucide-react"
 import { useState } from "react"
-import { CardStatusBadge } from "@/components/status-badge"
+import { CardChangeBadge, CardStatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -84,6 +84,7 @@ export function FeaturesPanel({
                           {feature.card.issues !== null && feature.card.issues > 0 && (
                             <Badge variant="warning">{feature.card.issues}</Badge>
                           )}
+                          <CardChangeBadge change={feature.card.change} />
                           <CardStatusBadge status={feature.card.status} />
                         </>
                       )}

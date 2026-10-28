@@ -1,4 +1,4 @@
-import { KnowledgeRepository, NotFoundError } from "@code-to-rag/core"
+import { featureKey, KnowledgeRepository, NotFoundError } from "@code-to-rag/core"
 import { and, asc, count, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm"
 import { Effect, Layer, Option } from "effect"
 import { randomUUID } from "node:crypto"
@@ -8,6 +8,7 @@ import {
   card,
   cardReference,
   cardVerification,
+  chunk as indexChunk,
   correction,
   feature,
   fileSummary,
@@ -17,7 +18,7 @@ import {
   testQuestion
 } from "./schema/rag.ts"
 
-/** Rows per INSERT: well below the 65 535 bind parameters of a Postgres statement. */
+/** Rows per INSERT (and values per IN list): well below the 65 535 bind parameters of a Postgres statement. */
 const INSERT_CHUNK = 1000
 
 const chunks = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> => {
@@ -25,14 +26,6 @@ const chunks = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A
   for (let i = 0; i < items.length; i += size) result.push(items.slice(i, i + size))
   return result
 }
-
-/** Key used to re-attach corrections to a feature of a new map: case, spacing and punctuation ignored. */
-export const featureKey = (name: string): string =>
-  name
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
 
 const correctionView = (row: typeof correction.$inferSelect) => ({
   id: row.id,
@@ -162,6 +155,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 symbols: feature.symbols,
                 cardId: card.id,
                 cardStatus: card.status,
+                cardChange: card.change,
                 cardTitle: card.title,
                 cardVersion: card.version,
                 unreferencedStatements: card.unreferencedStatements,
@@ -204,6 +198,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 : {
                     id: row.cardId,
                     status: row.cardStatus,
+                    change: row.cardChange,
                     title: row.cardTitle,
                     unreferencedStatements: row.unreferencedStatements,
                     // A verification of an older version is outdated.
@@ -217,12 +212,12 @@ export const KnowledgeRepositoryLive = Layer.effect(
       saveCard: (id, newCard, provenance) =>
         query("knowledge.saveCard", () =>
           db.transaction(async (tx) => {
-            // Versions continue across regenerations of the same feature's card.
+            // Versions continue across regenerations of the same feature's card, and across versions of the code.
             const [previous] = await tx
               .select({ version: card.version })
               .from(card)
               .where(eq(card.featureId, newCard.featureId))
-            const version = (previous?.version ?? 0) + 1
+            const version = Math.max(previous?.version ?? 0, newCard.baseVersion ?? 0) + 1
             await tx.delete(card).where(eq(card.featureId, newCard.featureId))
             const cardId = randomUUID()
             await tx.insert(card).values({
@@ -230,6 +225,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
               snapshotId: id,
               featureId: newCard.featureId,
               status: newCard.status,
+              change: newCard.change ?? null,
               title: newCard.content.title,
               summary: newCard.content.summary,
               content: newCard.content,
@@ -275,6 +271,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
             symbols: row.feature.symbols
           },
           status: row.card.status,
+          change: row.card.change,
           content: row.card.content,
           sourceRevision: row.card.sourceRevision,
           version: row.card.version,
@@ -468,7 +465,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 .where(inArray(correction.id, [...ids]))
             ).pipe(Effect.asVoid),
 
-      reattachCorrections: (id, projectId) =>
+      reattachCorrections: (id, projectId, options) =>
         query("knowledge.reattachCorrections", () =>
           db.transaction(async (tx) => {
             const features = await tx
@@ -481,14 +478,132 @@ export const KnowledgeRepositoryLive = Layer.effect(
               .from(correction)
               .where(eq(correction.projectId, projectId))
             for (const row of corrections) {
-              // Re-attached corrections are pending again: the new card has not applied them yet.
+              // Re-attached corrections are pending again (the new card has not applied them yet), except in an
+              // incremental update: unchanged cards are copied with the corrections they applied.
               await tx
                 .update(correction)
-                .set({ featureId: byKey.get(row.featureKey) ?? null, appliedVersion: null })
+                .set({
+                  featureId: byKey.get(row.featureKey) ?? null,
+                  ...(options?.keepApplied === true ? {} : { appliedVersion: null })
+                })
                 .where(eq(correction.id, row.id))
             }
           })
-        )
+        ),
+
+      copyFileSummaries: (id, baseId, paths, provenance) =>
+        Effect.forEach(chunks(paths, INSERT_CHUNK), (group) =>
+          query("knowledge.copyFileSummaries", () =>
+            db.transaction(async (tx) => {
+              const copied = await tx.execute<{ path: string }>(sql`
+                insert into ${fileSummary} (snapshot_id, path, language, content_hash, summary, parts, prompt_version, model)
+                select ${id}, path, language, content_hash, summary, parts, prompt_version, model
+                from ${fileSummary}
+                where ${and(
+                  eq(fileSummary.snapshotId, baseId),
+                  inArray(fileSummary.path, [...group]),
+                  eq(fileSummary.model, provenance.model),
+                  eq(fileSummary.promptVersion, provenance.promptVersion)
+                )}
+                on conflict (snapshot_id, path) do nothing
+                returning path`)
+              const done = copied.rows.map((row) => row.path)
+              if (done.length > 0) {
+                await tx.execute(sql`
+                  insert into ${symbolSummary} (snapshot_id, path, qualified_name, kind, start_line, end_line, summary)
+                  select ${id}, path, qualified_name, kind, start_line, end_line, summary
+                  from ${symbolSummary}
+                  where ${and(eq(symbolSummary.snapshotId, baseId), inArray(symbolSummary.path, done))}`)
+              }
+              return done
+            })
+          )
+        ).pipe(Effect.map((groups) => groups.flat())),
+
+      copyModuleSummaries: (id, baseId, paths, provenance) =>
+        Effect.forEach(
+          chunks(paths, INSERT_CHUNK),
+          (group) =>
+            query("knowledge.copyModuleSummaries", () =>
+              db.execute(sql`
+                insert into ${moduleSummary} (snapshot_id, path, depth, summary, file_count, prompt_version, model)
+                select ${id}, path, depth, summary, file_count, prompt_version, model
+                from ${moduleSummary}
+                where ${and(
+                  eq(moduleSummary.snapshotId, baseId),
+                  inArray(moduleSummary.path, [...group]),
+                  eq(moduleSummary.model, provenance.model),
+                  eq(moduleSummary.promptVersion, provenance.promptVersion)
+                )}
+                on conflict (snapshot_id, path) do nothing`)
+            ),
+          { discard: true }
+        ),
+
+      copyCard: (id, input) =>
+        query("knowledge.copyCard", () =>
+          db.transaction(async (tx) => {
+            const [source] = await tx.select().from(card).where(eq(card.id, input.cardId))
+            if (source === undefined) return undefined
+            const cardId = randomUUID()
+            // Idempotent: a previous attempt may have copied it already.
+            await tx.delete(card).where(eq(card.featureId, input.featureId))
+            await tx.insert(card).values({
+              ...source,
+              id: cardId,
+              snapshotId: id,
+              featureId: input.featureId,
+              status: input.status ?? source.status,
+              change: "kept",
+              createdAt: new Date(),
+              updatedAt: source.updatedAt
+            })
+            await tx.execute(sql`
+              insert into ${cardReference} (card_id, section, item_index, claim, path, start_line, end_line)
+              select ${cardId}, section, item_index, claim, path, start_line, end_line
+              from ${cardReference} where ${eq(cardReference.cardId, source.id)}`)
+            await tx.execute(sql`
+              insert into ${cardVerification}
+                (card_id, card_version, statements, missing, issues, prompt_version, model, verified_at)
+              select ${cardId}, card_version, statements, missing, issues, prompt_version, model, verified_at
+              from ${cardVerification} where ${eq(cardVerification.cardId, source.id)}`)
+            // Same text, same vectors: the copied card does not need to be embedded again.
+            await tx.execute(sql`
+              insert into ${indexChunk}
+                (snapshot_id, card_id, card_version, section, text, embedding, dimensions, model, format_version)
+              select ${id}, ${cardId}, card_version, section, text, embedding, dimensions, model, format_version
+              from ${indexChunk} where ${eq(indexChunk.cardId, source.id)}`)
+            return cardId
+          })
+        ).pipe(
+          Effect.flatMap((cardId) =>
+            cardId === undefined
+              ? Effect.fail(new NotFoundError({ entity: "card", id: input.cardId }))
+              : Effect.succeed(cardId)
+          )
+        ),
+
+      changeCounts: (id) =>
+        query("knowledge.changeCounts", () =>
+          db
+            .select({ change: card.change, total: count() })
+            .from(card)
+            .where(eq(card.snapshotId, id))
+            .groupBy(card.change)
+        ).pipe(
+          Effect.map((rows) => {
+            const of = (change: string) => rows.find((row) => row.change === change)?.total ?? 0
+            return { kept: of("kept"), updated: of("updated"), created: of("created") }
+          })
+        ),
+
+      deleteSnapshots: (ids) =>
+        ids.length === 0
+          ? Effect.void
+          : query("knowledge.deleteSnapshots", () =>
+              // Everything else cascades; corrections and test questions only lose their feature (set null).
+              db.delete(ragSnapshot).where(inArray(ragSnapshot.id, [...ids]))
+            ).pipe(Effect.asVoid)
     })
   })
 )

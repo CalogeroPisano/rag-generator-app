@@ -177,7 +177,8 @@ export const askQuestion = Effect.fn("askQuestion")(function* (
   if (embeddings.modelId === undefined) {
     return yield* new InvalidInputError({ message: "Modello di embedding non configurato (EMBEDDING_MODEL)" })
   }
-  const { latestSnapshot: snapshot } = yield* projects.get(input.projectId)
+  // The version in use: a new version answers only once its update is complete.
+  const { currentSnapshot: snapshot } = yield* projects.get(input.projectId)
   if (snapshot === null || snapshot.understandingStatus !== "ready") {
     return yield* new InvalidInputError({ message: "Le schede del progetto non sono ancora pronte" })
   }

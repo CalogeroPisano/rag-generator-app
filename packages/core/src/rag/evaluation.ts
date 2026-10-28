@@ -42,6 +42,7 @@ import {
   SnapshotRepository
 } from "../ports.ts"
 import { chunks, provenance, skipInvalid, toPhaseError } from "../understanding/shared.ts"
+import { ensureNotUpdating } from "../updates.ts"
 import { generateAnswer, prepareAnswer } from "./chat.ts"
 
 const CARD_BATCH_SIZE = 4
@@ -323,6 +324,7 @@ const readySnapshot = Effect.fnUntraced(function* (snapshotId: SnapshotId) {
   if (snapshot.understandingStatus !== "ready") {
     return yield* new InvalidInputError({ message: "Le schede del progetto non sono ancora pronte" })
   }
+  yield* ensureNotUpdating(snapshot.projectId)
   const active = yield* jobs.active(snapshot.projectId)
   if (active.some((job) => job.type === "understanding")) {
     return yield* new InvalidInputError({ message: "La comprensione con IA è in corso: riprova al termine" })

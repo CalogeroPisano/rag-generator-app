@@ -17,7 +17,8 @@ const toState = (job: Job): JobStateWire => ({
   attempts: job.attempts,
   maxAttempts: job.maxAttempts,
   lastError: job.lastError,
-  progress: job.progress
+  progress: job.progress,
+  update: job.payload !== null && "baseSnapshotId" in job.payload
 })
 
 /**

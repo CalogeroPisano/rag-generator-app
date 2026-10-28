@@ -35,7 +35,9 @@ import type {
   JobProgress,
   ProjectId,
   ProjectSummary,
+  CardChange,
   Snapshot,
+  SnapshotChanges,
   SnapshotId,
   SnapshotStatus,
   SourceFileContent,
@@ -78,6 +80,17 @@ export class ProjectRepository extends Context.Service<
       readonly jobId: JobId
       readonly maxAttempts: number
     }): Effect.Effect<ProjectSummary, DatabaseError>
+    /** New version of an existing project: snapshot (based on `baseSnapshotId`) and acquisition job, atomically. */
+    createSnapshot(input: {
+      readonly projectId: ProjectId
+      readonly snapshotId: SnapshotId
+      readonly baseSnapshotId: SnapshotId | null
+      readonly uploadId: UploadId | null
+      readonly jobId: JobId
+      readonly maxAttempts: number
+    }): Effect.Effect<ProjectSummary, DatabaseError>
+    /** Makes a version the one in use. */
+    setCurrentSnapshot(id: ProjectId, snapshotId: SnapshotId): Effect.Effect<void, DatabaseError>
     readonly list: Effect.Effect<ReadonlyArray<ProjectSummary>, DatabaseError>
     get(id: ProjectId): Effect.Effect<ProjectSummary, NotFoundError | DatabaseError>
     getGitSource(id: ProjectId): Effect.Effect<GitSourceRecord, NotFoundError | DatabaseError>
@@ -110,6 +123,25 @@ export class SnapshotRepository extends Context.Service<
     saveScan(id: SnapshotId, result: ScanResult): Effect.Effect<void, DatabaseError>
     listFiles(id: SnapshotId): Effect.Effect<ReadonlyArray<SourceFileEntry>, DatabaseError>
     getFileContent(id: SnapshotId, path: string): Effect.Effect<SourceFileContent, NotFoundError | DatabaseError>
+    /** Hash of the masked content of every included file. */
+    fileHashes(
+      id: SnapshotId
+    ): Effect.Effect<ReadonlyArray<{ readonly path: string; readonly contentHash: string }>, DatabaseError>
+    saveChanges(id: SnapshotId, changes: SnapshotChanges): Effect.Effect<void, DatabaseError>
+    /** Versions of a project, newest first. */
+    list(projectId: ProjectId): Effect.Effect<ReadonlyArray<Snapshot>, DatabaseError>
+    /**
+     * Deletes versions with their files, analysis and jobs, and the blobs no other file uses. Returns the uploads
+     * they referenced, to delete them from disk. The `rag` data is deleted separately.
+     */
+    delete(
+      ids: ReadonlyArray<SnapshotId>
+    ): Effect.Effect<{ readonly uploadIds: ReadonlyArray<UploadId> }, DatabaseError>
+    /**
+     * Drops a new version identical to its base: its jobs move to the base version (so that the running
+     * acquisition job can complete), then it is deleted.
+     */
+    discard(id: SnapshotId, baseId: SnapshotId): Effect.Effect<void, DatabaseError>
     /** Uploads still needed by snapshots that are not acquired yet (or may be retried). */
     readonly pendingUploadIds: Effect.Effect<ReadonlyArray<UploadId>, DatabaseError>
   }
@@ -331,6 +363,9 @@ export interface NewVerification {
 export interface NewCard {
   readonly featureId: string
   readonly status: CardStatus
+  /** Incremental update: how the card was produced and the version it continues (of the previous snapshot). */
+  readonly change?: CardChange | undefined
+  readonly baseVersion?: number | undefined
   readonly content: CardContent
   readonly sourceRevision: string
   readonly unreferencedStatements: number
@@ -410,8 +445,48 @@ export class KnowledgeRepository extends Context.Service<
     /** Corrections attached to the features of the snapshot, oldest first. */
     corrections(id: SnapshotId): Effect.Effect<ReadonlyArray<Correction>, DatabaseError>
     markCorrectionsApplied(ids: ReadonlyArray<string>, cardVersion: number): Effect.Effect<void, DatabaseError>
-    /** After a new feature map: attaches the project's corrections to the features with the same (normalized) name. */
-    reattachCorrections(id: SnapshotId, projectId: ProjectId): Effect.Effect<void, DatabaseError>
+    /**
+     * After a new feature map: attaches the project's corrections to the features with the same (normalized) name.
+     * They become pending again, unless `keepApplied` (incremental update: copied cards keep having applied them).
+     */
+    reattachCorrections(
+      id: SnapshotId,
+      projectId: ProjectId,
+      options?: { readonly keepApplied: boolean }
+    ): Effect.Effect<void, DatabaseError>
+
+    // ── Incremental updates (phase 6) ──
+    /**
+     * Copies the summaries of the given files (and of their declarations) from the base snapshot, when they were
+     * written by the same model and prompt version. Returns the paths copied.
+     */
+    copyFileSummaries(
+      id: SnapshotId,
+      baseId: SnapshotId,
+      paths: ReadonlyArray<string>,
+      provenance: Provenance
+    ): Effect.Effect<ReadonlyArray<string>, DatabaseError>
+    /** Copies module summaries (same model and prompt version) that are not stored yet. */
+    copyModuleSummaries(
+      id: SnapshotId,
+      baseId: SnapshotId,
+      paths: ReadonlyArray<string>,
+      provenance: Provenance
+    ): Effect.Effect<void, DatabaseError>
+    /**
+     * Copies a card of the base snapshot to a feature of this one: content, status, version, review, verification,
+     * references and index chunks. `status` overrides the copied status. Returns the new card id.
+     */
+    copyCard(
+      id: SnapshotId,
+      input: { readonly cardId: string; readonly featureId: string; readonly status?: CardStatus | undefined }
+    ): Effect.Effect<string, NotFoundError | DatabaseError>
+    /** Cards of the snapshot by how the update produced them. */
+    changeCounts(
+      id: SnapshotId
+    ): Effect.Effect<{ readonly kept: number; readonly updated: number; readonly created: number }, DatabaseError>
+    /** Deletes the knowledge of the given snapshots (corrections and test questions belong to the project: kept). */
+    deleteSnapshots(ids: ReadonlyArray<SnapshotId>): Effect.Effect<void, DatabaseError>
   }
 >()("code-to-rag/core/KnowledgeRepository") {}
 
@@ -547,6 +622,7 @@ export class EvaluationRepository extends Context.Service<
     getRun(runId: string): Effect.Effect<TestRunView, NotFoundError | DatabaseError>
     saveResult(runId: string, result: TestResult): Effect.Effect<void, DatabaseError>
     finishRun(runId: string, status: TestRunStatus, totals: TestRunTotals | null): Effect.Effect<void, DatabaseError>
+    /** Runs of every kept version of the snapshot's project, newest first (to compare versions). */
     runs(id: SnapshotId): Effect.Effect<ReadonlyArray<TestRun>, DatabaseError>
   }
 >()("code-to-rag/core/EvaluationRepository") {}

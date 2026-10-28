@@ -127,6 +127,24 @@ Dependency direction: `analysis`, `ai` ← `core` ← `db` ← apps. `core` defi
    the expected card, chat answer without history, `answer-judge` verdict; totals in `rag.test_run`.
 5. Understanding refuses to start while card, questions or evaluation jobs are active, and vice versa.
 
+### Data flow (phase 6: incremental updates)
+
+1. "Nuova versione" → `requestNewVersion` (`core/src/updates.ts`; refused if any non-indexing job is active): snapshot
+   with `base_snapshot_id` = the version in use (`project.current_snapshot_id`) + acquisition job. Everything reads the
+   current snapshot (`ProjectSummary.currentSnapshot`), not the latest. Acquisition `finalize` discards a version with
+   the base's commit/content hash (`unchangedBase`, `SnapshotRepository.discard` moves its jobs to the base).
+2. Analysis `finalize` → `continueNewVersion`: records `snapshot.changes.files` (`diffFiles` on included files' hashes);
+   base with cards → `requestUpdate` (`understanding` job, payload `{ baseSnapshotId }`), otherwise `promoteSnapshot`.
+3. Same understanding phases, incremental when the payload has a base (`understanding/update.ts` pure helpers):
+   `prepare` copies unchanged file summaries (same model + prompt version), `summarize-modules` copies modules outside
+   `dirtyModules`, `map-features` uses `FEATURE_UPDATE` (`carryFeatures` + `applyFeatureUpdate`, features matched by
+   `featureKey`), `generate-cards` copies (`copyCard`: status, version, verification, references, chunks; `change =
+kept`), updates from the previous card (`changedFiles` in the CARD prompt, `baseVersion`, reviewed →
+   `needs_recheck`, `change = updated`) or creates (`change = created`); `finalize` re-attaches corrections/questions,
+   stores `changes.cards`, `promoteSnapshot` (→ `pruneSnapshots`, `SNAPSHOT_RETENTION`), `requestIndexing`.
+4. `ensureNotUpdating` (any active job on a non-current snapshot) guards review, corrections, "Rigenera schede",
+   question generation and test runs. Test runs are listed per project (all kept versions, with revision).
+
 ### Jobs and phases
 
 - A phase has a stable `name`, takes only the job, is **idempotent** (clears/overwrites what a previous attempt
@@ -189,7 +207,9 @@ Dependency direction: `analysis`, `ai` ← `core` ← `db` ← apps. `core` defi
 - Never commit `.env` or real secrets (GitHub push protection rejects even test keys: build them at runtime in tests).
 - Local dev with Ollama on CPU: model `code-to-rag-dev` = `qwen3:4b-instruct` with `num_ctx 8192`; run the worker
   locally with `AI_MODEL=code-to-rag-dev AI_CONTEXT_TOKENS=8192 AI_MAX_OUTPUT_TOKENS=2048 AI_CONCURRENCY=1
-AI_TIMEOUT="60 minutes"` (about 1.5 tokens/s: a card takes 15–30 minutes). Stop it by PID, not `pkill -f`.
+AI_TIMEOUT="60 minutes"` (about 1.5 tokens/s on CPU: a card takes 15–30 minutes; on the dev machine's GTX 1050 Ti with
+  `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` about 15 tokens/s, 81% of the model on GPU). Stop it by
+  PID, not `pkill -f`.
   Embeddings: `EMBEDDING_MODEL=bge-m3` (`ollama pull bge-m3`); the web needs the same AI/embedding variables (chat).
 
 ## Licensing
@@ -217,6 +237,9 @@ of every new dependency before adding it.
   the web process, streamed, conversations stored per user, in-app only (no external API yet); multilingual
   embeddings (`bge-m3` suggested) + hybrid search (pgvector + full-text, RRF), exact search (no ANN index); test
   questions generated + manual, test runs judged by the model. Model calls use undici's fetch (MIT).
+- Phase 6 (user's choices): new versions started manually ("Nuova versione"), the card update follows automatically;
+  changed cards are updated from the previous ones and reviewed ones return to `needs_recheck`, unchanged ones are
+  copied with their review; incremental feature map; the last `SNAPSHOT_RETENTION` (3) versions are kept.
 
 ## Status
 
@@ -226,6 +249,7 @@ of every new dependency before adding it.
 - Phase 4 (verification and review, project deletion): implemented.
 - Phase 5 (embedding index in pgvector, RAG chat with citations, test questions; no 5-minute time-to-first-token
   limit): implemented.
-- Next: phase 6 (incremental updates).
+- Phase 6 (incremental updates on new versions of the code): implemented.
+- Next: phase 7 (per-project knowledge export and import).
 - Roadmap (user's order): 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
   archive + manifest, and SQL for another Postgres; import), last.

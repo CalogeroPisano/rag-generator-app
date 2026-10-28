@@ -195,9 +195,10 @@ flowchart LR
   backoff), then by the job runner from the failed phase; configuration errors (missing model, 4xx) fail at once.
 - **Prompts are versioned** (`packages/ai/src/prompts/*`): the version is stored with every result and in the call
   log. Changing a prompt means bumping its version.
-- Requesting the understanding again starts from scratch for that snapshot (phase 6 will reuse unchanged summaries,
-  keyed by content hash). Reviewer corrections are kept: after the new feature map they are re-attached to the feature
-  with the same name and applied to its new card (see [Review](#review)).
+- Requesting the understanding again ("Rigenera schede") starts from scratch for that snapshot. A new version of the
+  code is instead updated incrementally (see [New versions](#new-versions-incremental-update)). Reviewer corrections
+  are kept: after the new feature map they are re-attached to the feature with the same name and applied to its new
+  card (see [Review](#review)).
 - Understanding and card jobs exclude each other on a project: a new feature map would replace the cards being
   reviewed. The same holds for test question generation and test runs.
 
@@ -234,9 +235,15 @@ stateDiagram-v2
   approved --> in_review: reopened
   excluded --> in_review: reopened
   in_review --> generated: regenerated
+  approved --> needs_recheck: new version changed its code
+  in_review --> needs_recheck: new version changed its code
+  needs_recheck --> approved
+  needs_recheck --> excluded
+  needs_recheck --> in_review: manual edit / assisted correction
 ```
 
-`needs_recheck` is reserved for incremental updates (phase 6).
+`needs_recheck` ("Da riverificare") marks a reviewed card that an incremental update rewrote for new code (or could
+not rewrite: the previous card is kept): the reviewer confirms it again.
 
 ### Operations
 
@@ -292,8 +299,8 @@ flowchart LR
 
 ## RAG chat
 
-The chat page (`/projects/<id>/chat`) asks questions about the latest snapshot of the project, whose cards are
-ready. It runs in the web process: one request per question, answered as a stream.
+The chat page (`/projects/<id>/chat`) asks questions about the version of the project in use (whose cards are
+ready; a new version answers only once its update is complete). It runs in the web process: one request per question, answered as a stream.
 
 ```mermaid
 sequenceDiagram
@@ -346,7 +353,9 @@ answers it.
 - **Manual questions**: add, edit and delete, with an optional expected answer.
 - Like corrections, questions belong to the project and to the feature **name**: after a new feature map they are
   re-attached by name; the others are shown as orphans and not run.
-- **Test run** ("Esegui i test", `evaluation` job, run id = job id):
+- **Test run** ("Esegui i test", `evaluation` job, run id = job id), on the version in use. The page lists the runs
+  of every kept version of the project, with their revision, so that a new version can be compared with the
+  previous one:
 
 ```mermaid
 flowchart LR
@@ -358,6 +367,52 @@ flowchart LR
 | `prepare`  | Fails at once without chat or embedding model. Creates (or resets) the run with the models, `RAG_TOP_CARDS`, the "approved only" option and the number of questions whose card is in scope.                                                                                                                                                                                               |
 | `answer`   | For each question not answered yet by this run: same retrieval and prompt as the chat (no history); records the rank of the expected card among the retrieved ones, the answer, the cited features; then `answer-judge` compares the answer with the expected card (and expected answer): `correct`, `partial`, `incorrect`, `no_answer`. An invalid judgment leaves the result unjudged. |
 | `finalize` | Totals: questions whose card was retrieved (within `RAG_TOP_CARDS`) and ranked first, mean reciprocal rank, verdict counts. Run `ready` (`failed` when the job fails for good).                                                                                                                                                                                                           |
+
+## New versions (incremental update)
+
+"Nuova versione" on the project page acquires the code again: a new archive for zip projects, the latest commit of
+the configured branch for Git projects. The version in use (`project.current_snapshot_id`) stays in use for pages,
+chat and tests until the new one is complete.
+
+```mermaid
+flowchart LR
+  n["Nuova versione<br/>snapshot (base = version in use)<br/>+ acquisition job"] --> a["acquisition"]
+  a -->|same commit / same content| d["discarded<br/>(job moves to the version in use)"]
+  a --> s["static analysis<br/>(full)"] --> c{"version in use<br/>has cards?"}
+  c -->|no| p["becomes current"]
+  c -->|yes| u["understanding job<br/>{ baseSnapshotId }"] --> p
+  p --> r["older versions beyond<br/>SNAPSHOT_RETENTION deleted"]
+```
+
+- **Start**: refused while a job of the project other than indexing is queued or running. The new snapshot records
+  its base (`snapshot.base_snapshot_id`).
+- **Nothing changed**: when the acquisition finds the commit (Git, checked before storing files) or the content hash
+  (zip) of the base, the new snapshot is deleted and its job is moved to the version in use; the page shows "Nessuna
+  modifica rispetto alla versione in uso".
+- **File changes**: at the end of the static analysis the included files are compared with the base by path and hash
+  of the masked content (`snapshot.changes.files`: added, modified, removed).
+- **Update** (`understanding` job with `payload = { baseSnapshotId }`, same phases as a full understanding):
+
+| Phase               | Incremental behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare`           | After the reset, copies the file (and declaration) summaries of unchanged files from the base, when written by the same model and prompt version.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `summarize-files`   | Summarizes only what was not copied: new and modified files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `summarize-modules` | Copies the summary of every module whose subtree has no changed path; the modules above a change (up to the root) are summarized again.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `map-features`      | `feature-update` prompt instead of `feature-map`: the features of the base are carried over without deleted files and declarations (a feature left without files is dropped); new and modified files are given to the model with the existing features, and attached to them (same name) or grouped into new features. Corrections and test questions are re-attached by name (`keepApplied`).                                                                                                                                                    |
+| `generate-cards`    | Per feature, matched by name with the base: same files and content (or an excluded card) → the card is **copied** with status, version, review, verification, references and index chunks (`change = kept`); files changed → the model **updates** the previous card (with the corrections and the list of changed files), version + 1, `change = updated`, an approved or in-review card becomes `needs_recheck`; new feature → card written from scratch (`change = created`). An update that fails keeps the previous card as `needs_recheck`. |
+| `verify-cards`      | Verifies only the cards without a verification of their version: the copied ones keep theirs.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `finalize`          | Re-attaches corrections and test questions written meanwhile, stores the card changes (`snapshot.changes.cards`: kept, updated, created, removed), makes the version current, deletes old versions, queues the indexing (copied cards already have their chunks: only updated and new ones are embedded).                                                                                                                                                                                                                                         |
+
+- **During the update** the review of the version in use is read-only (approve, exclude, edit, correct, regenerate,
+  verify, "Rigenera schede", question generation and test runs are refused): the update reads its cards and the
+  changes would not reach the new version. The chat and manual test questions keep working. If the update fails, the
+  version in use stays; the job can be retried, or another new version started.
+- **Retention**: when a version becomes current, older versions are deleted except the newest complete ones, up to
+  `SNAPSHOT_RETENTION` versions in all (default 3). Deleted with them: files, analysis, jobs, knowledge, index, test
+  runs, the archives on disk and the blobs no other file uses. Corrections, test questions and conversations belong to
+  the project and stay; chat messages keep their copied sources. Versions newer than the current one (a failed
+  update) are kept until a later version becomes current.
+- The **Versioni** tab lists the kept versions with their state (in use, previous, updating, failed) and changes.
 
 ## Deleting a project
 

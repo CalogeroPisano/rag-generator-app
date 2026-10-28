@@ -11,6 +11,8 @@ export interface AppConfigShape {
   readonly gitAllowHttp: boolean
   readonly gitCloneTimeout: Duration.Duration
   readonly jobMaxAttempts: number
+  /** Versions kept per project, the current one included (older ones are deleted when a new one becomes current). */
+  readonly snapshotRetention: number
   /** Directory with the tree-sitter wasm files; undefined in development (read from node_modules). */
   readonly grammarsDir: string | undefined
   readonly rag: {
@@ -49,6 +51,7 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()("cod
         gitAllowHttp: yield* Config.Boolean("GIT_ALLOW_HTTP").pipe(Config.withDefault(false)),
         gitCloneTimeout: yield* Config.Duration("GIT_CLONE_TIMEOUT").pipe(Config.withDefault(Duration.minutes(10))),
         jobMaxAttempts: yield* Config.Int("JOB_MAX_ATTEMPTS").pipe(Config.withDefault(3)),
+        snapshotRetention: Math.max(1, yield* Config.Int("SNAPSHOT_RETENTION").pipe(Config.withDefault(3))),
         grammarsDir: Option.getOrUndefined(yield* Config.option(Config.String("GRAMMARS_DIR"))),
         rag: {
           topCards: yield* Config.Int("RAG_TOP_CARDS").pipe(Config.withDefault(5)),

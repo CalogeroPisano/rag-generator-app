@@ -1,19 +1,19 @@
-import { EvaluationRepository, NotFoundError, type TestResult } from "@code-to-rag/core"
-import { and, asc, desc, eq, sql } from "drizzle-orm"
+import { EvaluationRepository, featureKey, NotFoundError, type TestResult } from "@code-to-rag/core"
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { randomUUID } from "node:crypto"
 import { Database, query } from "./client.ts"
-import { featureKey } from "./knowledge-repository.ts"
 import { decodeTestQuestion, decodeTestResult, decodeTestRun } from "./rows.ts"
-import { feature, testQuestion, testResult, testRun } from "./schema/rag.ts"
+import { feature, ragSnapshot, testQuestion, testResult, testRun } from "./schema/rag.ts"
 
 /** Most recent runs listed per snapshot. */
 const MAX_RUNS = 20
 
-const runView = (row: typeof testRun.$inferSelect) =>
+const runView = (row: typeof testRun.$inferSelect, revision: string) =>
   decodeTestRun({
     id: row.id,
     snapshotId: row.snapshotId,
+    revision,
     status: row.status,
     model: row.model,
     embeddingModel: row.embeddingModel,
@@ -156,7 +156,13 @@ export const EvaluationRepositoryLive = Layer.effect(
 
       getRun: Effect.fnUntraced(function* (runId) {
         const [runs, results] = yield* Effect.all([
-          query("evaluation.getRun", () => db.select().from(testRun).where(eq(testRun.id, runId))),
+          query("evaluation.getRun", () =>
+            db
+              .select({ run: testRun, revision: ragSnapshot.revision })
+              .from(testRun)
+              .innerJoin(ragSnapshot, eq(ragSnapshot.id, testRun.snapshotId))
+              .where(eq(testRun.id, runId))
+          ),
           query("evaluation.results", () =>
             db.select().from(testResult).where(eq(testResult.runId, runId)).orderBy(asc(testResult.id))
           )
@@ -164,7 +170,7 @@ export const EvaluationRepositoryLive = Layer.effect(
         const row = runs[0]
         if (row === undefined) return yield* new NotFoundError({ entity: "test run", id: runId })
         return {
-          run: yield* runView(row),
+          run: yield* runView(row.run, row.revision),
           results: yield* Effect.forEach(results, (result) =>
             decodeTestResult({
               questionId: result.questionId,
@@ -201,9 +207,20 @@ export const EvaluationRepositoryLive = Layer.effect(
 
       runs: Effect.fnUntraced(function* (id) {
         const rows = yield* query("evaluation.runs", () =>
-          db.select().from(testRun).where(eq(testRun.snapshotId, id)).orderBy(desc(testRun.startedAt)).limit(MAX_RUNS)
+          db
+            .select({ run: testRun, revision: ragSnapshot.revision })
+            .from(testRun)
+            .innerJoin(ragSnapshot, eq(ragSnapshot.id, testRun.snapshotId))
+            .where(
+              inArray(
+                ragSnapshot.projectId,
+                db.select({ projectId: ragSnapshot.projectId }).from(ragSnapshot).where(eq(ragSnapshot.id, id))
+              )
+            )
+            .orderBy(desc(testRun.startedAt))
+            .limit(MAX_RUNS)
         )
-        return yield* Effect.forEach(rows, runView)
+        return yield* Effect.forEach(rows, (row) => runView(row.run, row.revision))
       })
     })
   })

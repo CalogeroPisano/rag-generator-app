@@ -42,6 +42,17 @@ export class Project extends Schema.Class<Project>("Project")({
   createdAt: Schema.Date
 }) {}
 
+/** What changed from the base version (incremental update). */
+export const SnapshotChanges = Schema.Struct({
+  /** Included files compared by path and masked content. */
+  files: Schema.Struct({ added: Schema.Int, modified: Schema.Int, removed: Schema.Int }),
+  /** Set at the end of the update. */
+  cards: Schema.NullOr(
+    Schema.Struct({ kept: Schema.Int, updated: Schema.Int, created: Schema.Int, removed: Schema.Int })
+  )
+})
+export type SnapshotChanges = typeof SnapshotChanges.Type
+
 export class Snapshot extends Schema.Class<Snapshot>("Snapshot")({
   id: SnapshotId,
   projectId: ProjectId,
@@ -63,6 +74,9 @@ export class Snapshot extends Schema.Class<Snapshot>("Snapshot")({
   understoodAt: Schema.NullOr(Schema.Date),
   featureCount: Schema.Int,
   cardCount: Schema.Int,
+  /** Version this one was updated from; null for the first version of a project. */
+  baseSnapshotId: Schema.NullOr(SnapshotId),
+  changes: Schema.NullOr(SnapshotChanges),
   createdAt: Schema.Date
 }) {}
 
@@ -172,9 +186,14 @@ export type CardStatus = typeof CardStatus.Type
 export const FeatureSymbol = Schema.Struct({ path: Schema.String, qualifiedName: Schema.String })
 export type FeatureSymbol = typeof FeatureSymbol.Type
 
+/** How an incremental update produced a card (null: written by a full understanding). */
+export const CardChange = Schema.Literals(["kept", "updated", "created"])
+export type CardChange = typeof CardChange.Type
+
 export class CardInfo extends Schema.Class<CardInfo>("CardInfo")({
   id: Schema.String,
   status: CardStatus,
+  change: Schema.NullOr(CardChange),
   title: Schema.String,
   unreferencedStatements: Schema.Int,
   /** Issues found by the verification of the current version; null when not verified (or outdated). */
@@ -238,6 +257,7 @@ export class CardView extends Schema.Class<CardView>("CardView")({
     symbols: Schema.Array(FeatureSymbol)
   }),
   status: CardStatus,
+  change: Schema.NullOr(CardChange),
   content: CardContent,
   sourceRevision: Schema.String,
   version: Schema.Int,
@@ -368,6 +388,8 @@ export class TestRun extends Schema.Class<TestRun>("TestRun")({
   /** Same id as the evaluation job. */
   id: Schema.String,
   snapshotId: SnapshotId,
+  /** Commit or content hash of the version the run tested. */
+  revision: Schema.String,
   status: TestRunStatus,
   model: Schema.String,
   embeddingModel: Schema.String,
@@ -410,6 +432,10 @@ export class TestRunView extends Schema.Class<TestRunView>("TestRunView")({
   results: Schema.Array(TestResult)
 }) {}
 
+/** Input of an `understanding` job that updates a new version from the previous one (phase 6). */
+export const UpdateJobPayload = Schema.Struct({ baseSnapshotId: SnapshotId })
+export type UpdateJobPayload = typeof UpdateJobPayload.Type
+
 /** Input of an `evaluation` job. */
 export const EvaluationJobPayload = Schema.Struct({ approvedOnly: Schema.Boolean })
 export type EvaluationJobPayload = typeof EvaluationJobPayload.Type
@@ -450,8 +476,8 @@ export class Job extends Schema.Class<Job>("Job")({
   maxAttempts: Schema.Int,
   lastError: Schema.NullOr(Schema.String),
   progress: Schema.NullOr(JobProgress),
-  /** Job-specific input: card and evaluation jobs have one. */
-  payload: Schema.NullOr(Schema.Union([CardJobPayload, EvaluationJobPayload])),
+  /** Job-specific input: card, evaluation and update (understanding) jobs have one. */
+  payload: Schema.NullOr(Schema.Union([CardJobPayload, EvaluationJobPayload, UpdateJobPayload])),
   createdAt: Schema.Date,
   updatedAt: Schema.Date,
   finishedAt: Schema.NullOr(Schema.Date)
@@ -459,6 +485,9 @@ export class Job extends Schema.Class<Job>("Job")({
 
 export class ProjectSummary extends Schema.Class<ProjectSummary>("ProjectSummary")({
   project: Project,
+  /** Version in use: shown by the pages, used by the chat and the tests. */
+  currentSnapshot: Schema.NullOr(Snapshot),
+  /** Newest version: differs from the current one while a new version is being acquired or updated. */
   latestSnapshot: Schema.NullOr(Snapshot),
   latestJob: Schema.NullOr(Job)
 }) {}

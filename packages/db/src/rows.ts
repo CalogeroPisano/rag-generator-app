@@ -92,6 +92,8 @@ export const snapshotFromRow = (row: typeof snapshot.$inferSelect) =>
     understoodAt: row.understoodAt,
     featureCount: row.featureCount,
     cardCount: row.cardCount,
+    baseSnapshotId: row.baseSnapshotId,
+    changes: row.changes,
     createdAt: row.createdAt
   })
 

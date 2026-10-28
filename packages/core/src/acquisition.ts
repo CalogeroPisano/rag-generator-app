@@ -16,6 +16,7 @@ import { PhaseError } from "./errors.ts"
 import type { PhaseContext, Pipeline } from "./pipeline.ts"
 import { type AnalysisRepository, JobRepository, ProjectRepository, SnapshotRepository } from "./ports.ts"
 import { SecretBox } from "./secret-box.ts"
+import { unchangedBase } from "./updates.ts"
 
 const INSERT_BATCH_SIZE = 200
 
@@ -127,6 +128,11 @@ const ingestFiles = Effect.fn("acquisition.ingest")(
       )
     )
     if (!present) yield* fetchSource(job)
+    // A new version at the commit of the version in use: nothing to store, finalize discards it.
+    if ((yield* unchangedBase(job.snapshotId)) !== undefined) {
+      yield* progress({ completed: 0, total: 0, message: "Nessun nuovo commit rispetto alla versione in uso" })
+      return
+    }
 
     const skippedJson = yield* Effect.promise(() => fs.readFile(area.skipped, "utf8").catch(() => "[]"))
     const skipped = yield* Schema.decodeUnknownEffect(SkippedEntriesJson)(skippedJson).pipe(
@@ -170,12 +176,25 @@ const ingestFiles = Effect.fn("acquisition.ingest")(
     effect.pipe(Effect.mapError((error) => (error._tag === "PhaseError" ? error : toPhaseError("ingest")(error))))
 )
 
-/** finalize: marks the snapshot ready and removes temporary data. */
+/**
+ * finalize: marks the snapshot ready and removes temporary data. A new version
+ * identical to the one in use is discarded (its jobs move to the version in use).
+ */
 const finalize = Effect.fn("acquisition.finalize")(
-  function* (job: Job) {
+  function* (job: Job, progress: PhaseContext["progress"]) {
     const config = yield* AppConfig
     const snapshots = yield* SnapshotRepository
     const { uploadId } = yield* snapshots.get(job.snapshotId)
+    const unchanged = yield* unchangedBase(job.snapshotId)
+    if (unchanged !== undefined) {
+      yield* Effect.promise(() => fs.rm(workspace(config.workDir, job).root, { recursive: true, force: true }))
+      if (uploadId !== null) {
+        yield* Effect.promise(() => fs.rm(uploadPath(config.uploadsDir, uploadId), { force: true }))
+      }
+      yield* progress({ completed: 0, total: 0, message: "Nessuna modifica rispetto alla versione in uso" })
+      // Last step: once discarded, the job belongs to the version in use.
+      return yield* snapshots.discard(job.snapshotId, unchanged.id)
+    }
     yield* snapshots.setStatus(job.snapshotId, "ready")
     // The static analysis is a separate job, so it can be re-run on its own.
     yield* requestAnalysis(job.snapshotId)
@@ -194,7 +213,7 @@ export const acquisitionPipeline: Pipeline<
   phases: [
     { name: "fetch", run: ({ job }) => fetchSource(job) },
     { name: "ingest", run: ({ job, progress }) => ingestFiles(job, progress) },
-    { name: "finalize", run: ({ job }) => finalize(job) }
+    { name: "finalize", run: ({ job, progress }) => finalize(job, progress) }
   ],
   onFailed: (job) =>
     Effect.gen(function* () {

@@ -49,6 +49,7 @@ To scale processing, start more workers: `docker compose up -d --scale worker=3`
 | `GIT_CLONE_TIMEOUT`             | `10 minutes`            | Maximum clone time                                                                     |
 | `WORKER_CONCURRENCY`            | `2`                     | Jobs run in parallel by each worker                                                    |
 | `JOB_MAX_ATTEMPTS`              | `3`                     | Attempts per job                                                                       |
+| `SNAPSHOT_RETENTION`            | `3`                     | Versions of the code kept per project, the one in use included (minimum 1)             |
 | `LOG_FORMAT`                    | `json`                  | `json` or `pretty`                                                                     |
 | `GRAMMARS_DIR`                  | set in the worker image | Directory of the tree-sitter `.wasm` files (development: resolved from `node_modules`) |
 
@@ -142,6 +143,9 @@ docker compose exec postgres pg_dump -U code_to_rag -Fc code_to_rag > backup.dum
 ```
 
 Keep `APP_ENCRYPTION_KEY` separately: without it, the stored Git tokens can no longer be used.
+
+Each project keeps up to `SNAPSHOT_RETENTION` versions of its code; unchanged files are stored once (deduplicated
+by hash), so a new version mostly adds its changed files and the copies of the knowledge rows.
 
 ## Upgrades
 

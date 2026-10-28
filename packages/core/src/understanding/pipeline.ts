@@ -13,10 +13,12 @@ import {
   estimateTokens,
   FEATURE_MAP,
   FEATURE_MERGE,
+  FEATURE_UPDATE,
   FeatureMapOutput,
   featureMapInstructions,
   FeatureMergeOutput,
   featureMergeInstructions,
+  featureUpdateInstructions,
   EmbeddingModel,
   FILE_ROLLUP,
   FILE_SUMMARY,
@@ -29,6 +31,7 @@ import {
   renderFeatureMap,
   renderFeatureMapFile,
   renderFeatureMerge,
+  renderFeatureUpdate,
   renderFileRollup,
   renderFileSummary,
   renderModuleSummary,
@@ -38,7 +41,7 @@ import {
 import { Effect } from "effect"
 import { randomUUID } from "node:crypto"
 import { AppConfig } from "../config.ts"
-import { type Job, JobId, type SnapshotId } from "../domain.ts"
+import { type CardStatus, type FeatureEntry, type Job, JobId, type SnapshotId } from "../domain.ts"
 import { InvalidInputError, PhaseError } from "../errors.ts"
 import type { PhaseContext, Pipeline } from "../pipeline.ts"
 import { requestIndexing } from "../rag/indexing.ts"
@@ -50,15 +53,27 @@ import {
   KnowledgeRepository,
   type NewFeature,
   type NewFileSummary,
+  ProjectRepository,
   SnapshotRepository,
   UnderstandingRepository
 } from "../ports.ts"
-import { dedupeFeatures, mergeFeatures, normalizeFeatures } from "./features.ts"
+import { ensureNotUpdating, promoteSnapshot } from "../updates.ts"
+import { dedupeFeatures, featureKey, mergeFeatures, normalizeFeatures } from "./features.ts"
 import { planModules } from "./modules.ts"
 import { splitIntoParts } from "./parts.ts"
 import { loadCardSources, verifyCard, writeCard } from "./cards.ts"
 import { selectFiles } from "./select.ts"
 import { chunks, groupBy, inputBudget, provenance, skipInvalid, toPhaseError } from "./shared.ts"
+import {
+  applyFeatureUpdate,
+  carryFeatures,
+  changedPaths,
+  diffFiles,
+  dirtyModules,
+  featureAffected,
+  featureChangedFiles,
+  type FileChanges
+} from "./update.ts"
 
 /** Summaries and cards are always written in English. */
 export const UNDERSTANDING_LANGUAGE = "en"
@@ -71,6 +86,31 @@ const MAX_FILE_DECLARATIONS = 80
 const MAX_FEATURE_MAP_DECLARATIONS = 6
 
 type Progress = PhaseContext["progress"]
+
+/** Review states a reviewer must confirm again when the card is rewritten for new code. */
+const REVIEWED: ReadonlySet<CardStatus> = new Set(["approved", "in_review", "needs_recheck"])
+
+interface UpdateBase {
+  readonly baseId: SnapshotId
+  readonly changes: FileChanges
+  readonly changed: ReadonlySet<string>
+}
+
+/**
+ * Incremental update (phase 6): the previous version and the file changes,
+ * from the job payload; undefined for a full understanding.
+ */
+const updateBase = Effect.fnUntraced(function* (job: Job) {
+  const payload = job.payload
+  if (payload === null || !("baseSnapshotId" in payload)) return undefined
+  const snapshots = yield* SnapshotRepository
+  const [before, after] = yield* Effect.all([
+    snapshots.fileHashes(payload.baseSnapshotId),
+    snapshots.fileHashes(job.snapshotId)
+  ])
+  const changes = diffFiles(before, after)
+  return { baseId: payload.baseSnapshotId, changes, changed: changedPaths(changes) } satisfies UpdateBase
+})
 
 // ---------------------------------------------------------------------------
 // prepare
@@ -90,6 +130,16 @@ const prepare = Effect.fn("understanding.prepare")(
     yield* understanding.setStatus(job.snapshotId, "running")
     const info = yield* understanding.snapshotInfo(job.snapshotId)
     yield* knowledge.reset(info, { language: UNDERSTANDING_LANGUAGE, model: model.modelId })
+    // Incremental update: files with the same content keep their summary (same model and prompt only).
+    const base = yield* updateBase(job)
+    if (base !== undefined) {
+      yield* knowledge.copyFileSummaries(
+        job.snapshotId,
+        base.baseId,
+        base.changes.unchanged,
+        provenance(model, FILE_SUMMARY)
+      )
+    }
   },
   (effect) => effect.pipe(Effect.mapError(toPhaseError("prepare")))
 )
@@ -263,8 +313,19 @@ const summarizeModules = Effect.fn("understanding.summarizeModules")(
     const knowledge = yield* KnowledgeRepository
     const model = yield* LanguageModel
     const fileSummaries = new Map((yield* knowledge.fileSummaries(job.snapshotId)).map((s) => [s.path, s.summary]))
-    const moduleSummaries = new Map((yield* knowledge.moduleSummaries(job.snapshotId)).map((s) => [s.path, s.summary]))
     const plan = planModules([...fileSummaries.keys()])
+    // Incremental update: modules with no changed file in their subtree keep their summary.
+    const base = yield* updateBase(job)
+    if (base !== undefined) {
+      const dirty = dirtyModules(base.changed)
+      yield* knowledge.copyModuleSummaries(
+        job.snapshotId,
+        base.baseId,
+        plan.filter((module) => !dirty.has(module.path)).map((module) => module.path),
+        provenance(model, MODULE_SUMMARY)
+      )
+    }
+    const moduleSummaries = new Map((yield* knowledge.moduleSummaries(job.snapshotId)).map((s) => [s.path, s.summary]))
     const budget = inputBudget(model, moduleSummaryInstructions)
     let skipped = 0
 
@@ -318,12 +379,125 @@ const summarizeModules = Effect.fn("understanding.summarizeModules")(
 // ---------------------------------------------------------------------------
 // map-features
 
+/** Existing features listed in the update prompt: descriptions are shortened (then left out) to fit the budget. */
+const fitFeatureList = (
+  features: ReadonlyArray<{ readonly name: string; readonly description: string }>,
+  budget: number
+): Array<{ readonly name: string; readonly description: string }> => {
+  const shorten = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
+  for (const maxChars of [240, 120, 60, 0]) {
+    const listed = features.map((f) => ({ name: f.name, description: shorten(f.description, maxChars) }))
+    if (estimateTokens(listed.map((f) => `- ${f.name}: ${f.description}`).join("\n")) <= budget) return listed
+  }
+  return features.map((f) => ({ name: f.name, description: "" }))
+}
+
+/**
+ * Incremental feature map: the features of the previous version are carried
+ * over (without deleted files and declarations); new and modified files are
+ * attached to them or form new features.
+ */
+const updateFeatures = Effect.fnUntraced(function* (job: Job, progress: Progress, base: UpdateBase) {
+  const understanding = yield* UnderstandingRepository
+  const knowledge = yield* KnowledgeRepository
+  const model = yield* LanguageModel
+  const context = { phase: "map-features", jobId: job.id, snapshotId: job.snapshotId }
+
+  const fileSummaries = yield* knowledge.fileSummaries(job.snapshotId)
+  const declarations = yield* understanding.declarations(job.snapshotId)
+  const known = { files: new Set(fileSummaries.map((f) => f.path)), declarations }
+  const previous = yield* knowledge.featureMap(base.baseId)
+  const carried = carryFeatures(previous.features, known)
+  const projectSummary = (yield* knowledge.moduleSummaries(job.snapshotId)).find((m) => m.path === "")?.summary ?? null
+
+  const touched = new Set([...base.changes.added, ...base.changes.modified])
+  const declarationsByPath = groupBy(declarations, (d) => d.path)
+  const fileLines = fileSummaries
+    .filter((file) => touched.has(file.path))
+    .map((file) =>
+      renderFeatureMapFile({
+        path: file.path,
+        summary: file.summary,
+        symbols: (declarationsByPath.get(file.path) ?? [])
+          .filter((d) => d.container === null && d.exported)
+          .slice(0, MAX_FEATURE_MAP_DECLARATIONS)
+          .map((d) => d.qualifiedName)
+      })
+    )
+
+  const proposed: Array<NewFeature> = []
+  let skipped = 0
+  if (fileLines.length > 0) {
+    // The existing features take at most half of the budget; the files are batched in the rest.
+    const budget = inputBudget(model, featureUpdateInstructions)
+    const listed = fitFeatureList(carried, Math.floor(budget / 2))
+    const overhead = estimateTokens(renderFeatureUpdate({ projectSummary, features: listed, files: [] }))
+    const fileBudget = Math.max(512, budget - overhead)
+    const batches: Array<Array<string>> = [[]]
+    let used = 0
+    for (const line of fileLines) {
+      const cost = estimateTokens(line) + 1
+      const current = batches.at(-1) as Array<string>
+      if (current.length > 0 && used + cost > fileBudget) {
+        batches.push([line])
+        used = cost
+      } else {
+        current.push(line)
+        used += cost
+      }
+    }
+    let index = 0
+    for (const files of batches) {
+      index++
+      const answer = yield* skipInvalid(
+        model.generateObject({
+          prompt: FEATURE_UPDATE,
+          context,
+          instructions: featureUpdateInstructions,
+          input: renderFeatureUpdate({ projectSummary, features: listed, files }),
+          schema: FeatureMapOutput
+        }),
+        () => skipped++
+      )
+      if (answer !== undefined) proposed.push(...normalizeFeatures(answer.features, known))
+      yield* progress({
+        completed: index,
+        total: batches.length,
+        message: `${index} di ${batches.length} gruppi di file nuovi o modificati assegnati`
+      })
+    }
+  }
+
+  const features = applyFeatureUpdate(carried, proposed)
+  if (features.length === 0) {
+    return yield* new PhaseError({
+      phase: "map-features",
+      message: "Nessuna funzionalità resta collegata ai file della nuova versione",
+      retryable: false
+    })
+  }
+  yield* knowledge.replaceFeatures(job.snapshotId, features, provenance(model, FEATURE_UPDATE))
+  const info = yield* understanding.snapshotInfo(job.snapshotId)
+  // Copied cards keep the corrections they applied.
+  yield* knowledge.reattachCorrections(job.snapshotId, info.projectId, { keepApplied: true })
+  yield* (yield* EvaluationRepository).reattachQuestions(job.snapshotId, info.projectId)
+  const added = features.length - carried.length
+  const removed = previous.features.length - carried.length
+  yield* progress({
+    completed: 1,
+    total: 1,
+    message: `${features.length} funzionalità (${added} nuove, ${removed} rimosse)${skipped > 0 ? `, ${skipped} gruppi saltati` : ""}`
+  })
+})
+
 const mapFeatures = Effect.fn("understanding.mapFeatures")(
   function* (job: Job, progress: Progress) {
     const understanding = yield* UnderstandingRepository
     const knowledge = yield* KnowledgeRepository
     const model = yield* LanguageModel
     const context = { phase: "map-features", jobId: job.id, snapshotId: job.snapshotId }
+    const base = yield* updateBase(job)
+    if (base !== undefined) return yield* updateFeatures(job, progress, base)
 
     const fileSummaries = yield* knowledge.fileSummaries(job.snapshotId)
     const modules = [...(yield* knowledge.moduleSummaries(job.snapshotId))].sort((a, b) => a.path.localeCompare(b.path))
@@ -428,6 +602,14 @@ const mapFeatures = Effect.fn("understanding.mapFeatures")(
 // ---------------------------------------------------------------------------
 // generate-cards
 
+/** The card of the previous version for a feature, matched by name (like corrections and test questions). */
+const previousCards = Effect.fnUntraced(function* (base: UpdateBase | undefined) {
+  if (base === undefined) return new Map<string, FeatureEntry>()
+  const knowledge = yield* KnowledgeRepository
+  const { features } = yield* knowledge.featureMap(base.baseId)
+  return new Map(features.flatMap((f) => (f.card === null ? [] : [[featureKey(f.name), f] as const])))
+})
+
 const generateCards = Effect.fn("understanding.generateCards")(
   function* (job: Job, progress: Progress) {
     const understanding = yield* UnderstandingRepository
@@ -444,14 +626,17 @@ const generateCards = Effect.fn("understanding.generateCards")(
       (yield* knowledge.corrections(job.snapshotId)).filter((c) => c.featureId !== null),
       (c) => c.featureId ?? ""
     )
+    const base = yield* updateBase(job)
+    const previous = yield* previousCards(base)
 
     let completed = features.length - pending.length
     let skipped = 0
+    let kept = 0
     const report = () =>
       progress({
         completed,
         total: features.length,
-        message: `${completed} di ${features.length} schede generate${skipped > 0 ? ` (${skipped} saltate)` : ""}`
+        message: `${completed} di ${features.length} schede ${base === undefined ? "generate" : `pronte (${kept} invariate)`}${skipped > 0 ? ` (${skipped} saltate)` : ""}`
       })
     yield* report()
 
@@ -461,22 +646,57 @@ const generateCards = Effect.fn("understanding.generateCards")(
         (feature) =>
           Effect.gen(function* () {
             const featureCorrections = corrections.get(feature.id) ?? []
+            const before = previous.get(featureKey(feature.name))
+            const baseCard =
+              base === undefined || before?.card == null
+                ? undefined
+                : yield* knowledge.getCard(base.baseId, before.card.id)
+            // Same files, same content (or excluded by a reviewer): the card is copied with its review and index.
+            if (
+              base !== undefined &&
+              before !== undefined &&
+              baseCard !== undefined &&
+              (baseCard.status === "excluded" || !featureAffected(before, feature, base.changed))
+            ) {
+              yield* knowledge.copyCard(job.snapshotId, { cardId: baseCard.id, featureId: feature.id })
+              kept++
+              completed++
+              return
+            }
             const checked = yield* skipInvalid(
               writeCard(context, feature, sources, {
-                current: null,
-                corrections: featureCorrections.map((c) => c.text)
+                current: baseCard?.content ?? null,
+                corrections: featureCorrections.map((c) => c.text),
+                changedFiles:
+                  base === undefined || before === undefined
+                    ? undefined
+                    : featureChangedFiles(before, feature, base.changed)
               }),
-              () => skipped++
+              // Counted below: an answer still invalid and a feature with no file to show are both skipped.
+              () => undefined
             )
             if (checked === undefined) {
-              skipped++
+              // An update that failed keeps the previous card, for a reviewer to check against the new code.
+              if (baseCard !== undefined) {
+                yield* knowledge.copyCard(job.snapshotId, {
+                  cardId: baseCard.id,
+                  featureId: feature.id,
+                  status: "needs_recheck"
+                })
+                completed++
+              } else {
+                skipped++
+              }
               return
             }
             const version = yield* knowledge.saveCard(
               job.snapshotId,
               {
                 featureId: feature.id,
-                status: "generated",
+                // A reviewed card rewritten for new code waits for the reviewer again.
+                status: baseCard !== undefined && REVIEWED.has(baseCard.status) ? "needs_recheck" : "generated",
+                change: base === undefined ? undefined : baseCard === undefined ? "created" : "updated",
+                baseVersion: baseCard?.version,
                 content: checked.content,
                 sourceRevision: info.revision,
                 unreferencedStatements: checked.unreferencedStatements,
@@ -550,6 +770,30 @@ const finalize = Effect.fn("understanding.finalize")(
     const understanding = yield* UnderstandingRepository
     const counts = yield* knowledge.counts(job.snapshotId)
     yield* understanding.complete(job.snapshotId, counts)
+    const base = yield* updateBase(job)
+    if (base !== undefined) {
+      const snapshots = yield* SnapshotRepository
+      const info = yield* understanding.snapshotInfo(job.snapshotId)
+      // Corrections and test questions written meanwhile on the previous version follow the features here.
+      yield* knowledge.reattachCorrections(job.snapshotId, info.projectId, { keepApplied: true })
+      yield* (yield* EvaluationRepository).reattachQuestions(job.snapshotId, info.projectId)
+      const [cards, before, after] = yield* Effect.all([
+        knowledge.changeCounts(job.snapshotId),
+        knowledge.featureMap(base.baseId),
+        knowledge.featureMap(job.snapshotId)
+      ])
+      const names = new Set(after.features.map((f) => featureKey(f.name)))
+      yield* snapshots.saveChanges(job.snapshotId, {
+        files: {
+          added: base.changes.added.length,
+          modified: base.changes.modified.length,
+          removed: base.changes.removed.length
+        },
+        cards: { ...cards, removed: before.features.filter((f) => !names.has(featureKey(f.name))).length }
+      })
+      // The updated version replaces the previous one for pages, chat and tests.
+      yield* promoteSnapshot(job.snapshotId)
+    }
     // The new cards go into the chat's index (when embeddings are configured).
     yield* requestIndexing(job.snapshotId)
   },
@@ -563,6 +807,7 @@ export const understandingPipeline: Pipeline<
   | JobRepository
   | KnowledgeRepository
   | LanguageModel
+  | ProjectRepository
   | SnapshotRepository
   | UnderstandingRepository
 > = {
@@ -593,6 +838,7 @@ export const requestUnderstanding = Effect.fn("requestUnderstanding")(function* 
   if (snapshot.status !== "ready" || snapshot.analysisStatus !== "ready") {
     return yield* new InvalidInputError({ message: "L'analisi statica del progetto non è ancora completata" })
   }
+  yield* ensureNotUpdating(snapshot.projectId)
   // A new feature map would replace the cards that card, question and test jobs are working on.
   const active = yield* jobs.active(snapshot.projectId)
   if (active.some((job) => job.type === "card" || job.type === "questions" || job.type === "evaluation")) {
