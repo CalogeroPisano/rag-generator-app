@@ -10,7 +10,10 @@
 import { sql } from "drizzle-orm"
 import {
   bigserial,
+  boolean,
   check,
+  customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -224,5 +227,151 @@ export const correction = rag.table(
   (table) => [
     index("rag_correction_project_idx").on(table.projectId, table.featureKey),
     index("rag_correction_feature_idx").on(table.featureId)
+  ]
+)
+
+// ── Phase 5: embedding index, test questions and runs ──────────────────────
+
+/**
+ * pgvector column without a fixed dimension: the dimension depends on the
+ * embedding model, recorded next to every vector. Searches compare vectors of
+ * one model only.
+ */
+const vector = customType<{ data: ReadonlyArray<number>; driverData: string }>({
+  dataType: () => "vector",
+  toDriver: (value) => `[${value.join(",")}]`,
+  fromDriver: (value) => JSON.parse(value) as Array<number>
+})
+
+const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" })
+
+/**
+ * One indexed text unit of a card: its overview or one of its sections, with
+ * the embedding and a full-text vector ('simple' configuration: no stemming,
+ * cards are in English and questions may not be).
+ */
+export const chunk = rag.table(
+  "chunk",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    snapshotId: snapshotId(),
+    cardId: uuid("card_id")
+      .notNull()
+      .references(() => card.id, { onDelete: "cascade" }),
+    /** Card version the chunk was built from: older versions are ignored by searches and re-indexed. */
+    cardVersion: integer("card_version").notNull(),
+    /** `overview` or a card section. */
+    section: text("section").notNull(),
+    text: text("text").notNull(),
+    searchVector: tsvector("search_vector")
+      .notNull()
+      .generatedAlwaysAs(sql`to_tsvector('simple', "text")`),
+    embedding: vector("embedding").notNull(),
+    dimensions: integer("dimensions").notNull(),
+    model: text("model").notNull(),
+    /** Version of the chunk text format (`CARD_CHUNK`). */
+    formatVersion: integer("format_version").notNull(),
+    createdAt: createdAt()
+  },
+  (table) => [
+    index("rag_chunk_card_idx").on(table.cardId),
+    index("rag_chunk_snapshot_model_idx").on(table.snapshotId, table.model),
+    index("rag_chunk_search_idx").using("gin", table.searchVector)
+  ]
+)
+
+/**
+ * Test questions of the chat. Like corrections they belong to the project and
+ * to a feature name, survive new feature maps (re-attached by `feature_key`)
+ * and are deleted only with the project.
+ */
+export const testQuestion = rag.table(
+  "test_question",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id").notNull(),
+    featureId: uuid("feature_id").references(() => feature.id, { onDelete: "set null" }),
+    featureName: text("feature_name").notNull(),
+    featureKey: text("feature_key").notNull(),
+    question: text("question").notNull(),
+    expectedAnswer: text("expected_answer"),
+    origin: text("origin").notNull(),
+    /** Reviewer who wrote it (name copied); null for generated questions. */
+    authorName: text("author_name"),
+    /** Model and prompt version of generated questions. */
+    model: text("model"),
+    promptVersion: integer("prompt_version"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date())
+  },
+  (table) => [
+    index("rag_test_question_project_idx").on(table.projectId, table.featureKey),
+    index("rag_test_question_feature_idx").on(table.featureId),
+    check("rag_test_question_origin_check", sql`${table.origin} in ('generated', 'manual')`)
+  ]
+)
+
+/** A test run of the chat over the test questions (same id as its evaluation job). */
+export const testRun = rag.table(
+  "test_run",
+  {
+    id: uuid("id").primaryKey(),
+    snapshotId: snapshotId(),
+    status: text("status").notNull(),
+    model: text("model").notNull(),
+    embeddingModel: text("embedding_model").notNull(),
+    topK: integer("top_k").notNull(),
+    approvedOnly: boolean("approved_only").notNull(),
+    questions: integer("questions").notNull(),
+    retrievalHits: integer("retrieval_hits").notNull().default(0),
+    firstHits: integer("first_hits").notNull().default(0),
+    mrr: doublePrecision("mrr").notNull().default(0),
+    correct: integer("correct").notNull().default(0),
+    partial: integer("partial").notNull().default(0),
+    incorrect: integer("incorrect").notNull().default(0),
+    noAnswer: integer("no_answer").notNull().default(0),
+    unjudged: integer("unjudged").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true })
+  },
+  (table) => [
+    index("rag_test_run_snapshot_idx").on(table.snapshotId, table.startedAt),
+    check("rag_test_run_status_check", sql`${table.status} in ('running', 'ready', 'failed')`)
+  ]
+)
+
+/** Outcome of one question in a run; question and feature are copied (they may change or disappear later). */
+export const testResult = rag.table(
+  "test_result",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => testRun.id, { onDelete: "cascade" }),
+    questionId: uuid("question_id").notNull(),
+    question: text("question").notNull(),
+    expectedFeatureId: uuid("expected_feature_id").notNull(),
+    expectedFeatureName: text("expected_feature_name").notNull(),
+    /** `[{ featureId, featureName }]`, best first. */
+    retrieved: jsonb("retrieved").notNull(),
+    rank: integer("rank"),
+    answer: text("answer").notNull(),
+    citedFeatureIds: text("cited_feature_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    verdict: text("verdict"),
+    note: text("note"),
+    createdAt: createdAt()
+  },
+  (table) => [
+    uniqueIndex("rag_test_result_question_idx").on(table.runId, table.questionId),
+    check(
+      "rag_test_result_verdict_check",
+      sql`${table.verdict} is null or ${table.verdict} in ('correct', 'partial', 'incorrect', 'no_answer')`
+    )
   ]
 )

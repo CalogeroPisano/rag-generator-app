@@ -3,7 +3,7 @@
  * jobs (verify, regenerate, correct); manual edits and review decisions are
  * immediate. Also project deletion.
  */
-import { CARD, CARD_VERIFY, type CardContent, LanguageModel } from "@code-to-rag/ai"
+import { CARD, CARD_VERIFY, type CardContent, type EmbeddingModel, LanguageModel } from "@code-to-rag/ai"
 import { Effect } from "effect"
 import { randomUUID } from "node:crypto"
 import * as fs from "node:fs/promises"
@@ -23,6 +23,7 @@ import { type CallContext, type CardSources, loadCardSources, verifyCard, writeC
 import { checkReferences } from "./understanding/references.ts"
 import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { uploadPath } from "./acquisition.ts"
+import { requestIndexing } from "./rag/indexing.ts"
 
 /** The feature of a card job and its current card (looked up by feature: regeneration replaces the card id). */
 const featureWithCard = Effect.fnUntraced(function* (snapshotId: SnapshotId, featureId: string) {
@@ -91,7 +92,7 @@ const rewrite = Effect.fnUntraced(function* (
 const processCardJob = Effect.fn("review.processCardJob")(
   function* (job: Job) {
     const payload = job.payload
-    if (payload === null) {
+    if (payload === null || !("operation" in payload)) {
       return yield* new PhaseError({
         phase: "process",
         message: "Operazione sulla scheda non valida",
@@ -104,15 +105,26 @@ const processCardJob = Effect.fn("review.processCardJob")(
       case "verify":
         return yield* verifyStored(context, payload.featureId, sources)
       case "regenerate":
-        return yield* rewrite(context, payload.featureId, sources, { fromCurrent: false })
+        yield* rewrite(context, payload.featureId, sources, { fromCurrent: false })
+        break
       case "correct":
-        return yield* rewrite(context, payload.featureId, sources, { fromCurrent: true })
+        yield* rewrite(context, payload.featureId, sources, { fromCurrent: true })
     }
+    // The new version replaces the old one in the chat's index.
+    yield* requestIndexing(job.snapshotId)
   },
   (effect) => effect.pipe(Effect.mapError(toPhaseError("process")))
 )
 
-export const cardPipeline: Pipeline<KnowledgeRepository | LanguageModel | UnderstandingRepository> = {
+export const cardPipeline: Pipeline<
+  | AppConfig
+  | EmbeddingModel
+  | JobRepository
+  | KnowledgeRepository
+  | LanguageModel
+  | SnapshotRepository
+  | UnderstandingRepository
+> = {
   type: "card",
   phases: [{ name: "process", run: ({ job }) => processCardJob(job) }],
   // The card keeps its previous version: nothing to undo.
@@ -198,6 +210,7 @@ export const editCard = Effect.fn("editCard")(function* (
   )
   const checked = checkReferences(content, shown)
   yield* knowledge.editCard(snapshotId, cardId, checked, reviewer)
+  yield* requestIndexing(snapshotId)
 })
 
 export const setCardStatus = Effect.fn("setCardStatus")(function* (

@@ -169,7 +169,7 @@ flowchart LR
   prepare["prepare<br/>reset rag data"] --> files["summarize-files<br/>declarations + file"]
   files --> modules["summarize-modules<br/>bottom-up"] --> map["map-features<br/>features + files"]
   map --> cards["generate-cards<br/>one per feature"] --> verify["verify-cards<br/>second reading"]
-  verify --> finalize["finalize<br/>counts, ready"]
+  verify --> finalize["finalize<br/>counts, ready, queue indexing"]
 ```
 
 | Phase               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -180,13 +180,12 @@ flowchart LR
 | `map-features`      | The model lists the user-level features with their files and declarations, from the module overview and one line per file. Large projects are mapped in batches, then the candidates are merged. Paths and declarations that do not exist are dropped.                                                                                                                                                                        |
 | `generate-cards`    | For each feature, the files are read together: whole when they fit, otherwise the declarations of the feature with some context, then the first lines of the other files, then summaries only. The card cites path and lines for every statement; references outside the lines shown are dropped and statements left without one are counted. Resumable per card.                                                             |
 | `verify-cards`      | Second reading of every card against its code (see [Review](#automatic-verification)). Resumable: cards whose current version is verified are skipped.                                                                                                                                                                                                                                                                        |
-| `finalize`          | Counts features and cards, `understanding_status = ready`.                                                                                                                                                                                                                                                                                                                                                                    |
+| `finalize`          | Counts features and cards, `understanding_status = ready`, queues the indexing of the cards for the chat (when `EMBEDDING_MODEL` is set).                                                                                                                                                                                                                                                                                     |
 
-- **Streaming**: answers are always streamed and parsed at the end. A non-streamed call to a slow local model would
-  hit the 5-minute limit Node's `fetch` puts on waiting for response headers. Streaming moves the limit to the first
-  token: on CPU, reading a long input can still take more than 5 minutes before the model answers, so that call fails
-  (`AI_APICallError`, about 300 s in `model_call`) and is retried. Known limitation, to be removed in phase 5.
-  Otherwise only `AI_TIMEOUT` applies.
+- **Streaming**: answers are always streamed and parsed at the end. Model calls go through undici's `fetch` with no
+  headers or body timeout (`packages/ai/src/fetch.ts`): Node's built-in `fetch` gives up when the response headers
+  take more than 5 minutes, which happens on CPU when the model reads a long prompt before its first token. The only
+  limit is `AI_TIMEOUT`, per call.
 - **Budget**: every prompt is sized from `AI_CONTEXT_TOKENS - AI_MAX_OUTPUT_TOKENS` (conservative estimate of 3
   characters per token).
 - **Invalid answers**: the answer is validated with the Effect schema of the prompt; if it does not match, the model
@@ -200,7 +199,7 @@ flowchart LR
   keyed by content hash). Reviewer corrections are kept: after the new feature map they are re-attached to the feature
   with the same name and applied to its new card (see [Review](#review)).
 - Understanding and card jobs exclude each other on a project: a new feature map would replace the cards being
-  reviewed.
+  reviewed. The same holds for test question generation and test runs.
 
 ## Review
 
@@ -262,13 +261,112 @@ ignored), not to a card. Every card written for that feature (understanding, reg
 its prompt, oldest first, and records the version that applied them. After a new feature map they are re-attached by
 name; those whose feature disappeared are listed as orphans in the features tab.
 
+## Embedding index
+
+The chat finds cards through an index in `rag.chunk`. Every card that is not excluded is split into **chunks**: an
+overview (title, feature name, summary) and one chunk per non-empty section (what it does, configuration,
+parameters, limits, validation rules, errors), each starting with the card title. References are not embedded.
+Every chunk stores the embedding (pgvector, any dimension: the model and the dimension are stored with it) and a
+full-text vector (`to_tsvector('simple', text)`, generated column with a GIN index).
+
+```mermaid
+flowchart LR
+  u["understanding finalize"] --> q
+  c["card job<br/>(regenerate, correct)"] --> q
+  e["manual edit"] --> q
+  b["Aggiorna / Ricostruisci"] --> q
+  q["indexing job<br/>(one queued per snapshot)"] --> i["index<br/>cards without chunks for their<br/>version, model and format"]
+  i --> emb["EmbeddingModel.embed<br/>EMBEDDING_BATCH_SIZE per request"] --> s[("rag.chunk")]
+```
+
+- The `indexing` job has one phase, `index`: it lists the non-excluded cards with no chunks for their current
+  version, the configured model and the chunk format (`CARD_CHUNK` version), embeds their chunks eight cards at a
+  time and replaces the chunks of each card in a transaction. A card edited meanwhile is skipped (its version
+  changed) and picked up by the next round; the job makes up to three rounds.
+- A queued indexing job absorbs new requests; a running one does not, so a change made while it runs always gets a
+  new job. Concurrent jobs on the same card are serialised by an advisory lock.
+- Review decisions do not re-index: the status is read at search time. Excluded cards keep their chunks but are
+  never returned; reopening them makes them searchable again at once.
+- Without `EMBEDDING_MODEL` no indexing job is queued. Changing model re-indexes every card (vectors of different
+  models are never compared). "Ricostruisci" deletes the snapshot's chunks first.
+
+## RAG chat
+
+The chat page (`/projects/<id>/chat`) asks questions about the latest snapshot of the project, whose cards are
+ready. It runs in the web process: one request per question, answered as a stream.
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant B as Browser
+  participant W as web (askQuestion)
+  participant M as Embedding / chat model
+  participant DB as PostgreSQL
+
+  U->>B: question
+  B->>W: POST /api/chat { projectId, conversationId, question, approvedOnly }
+  W->>DB: conversation (new or the user's own) + question stored
+  W-->>B: event: conversation
+  W->>M: embedding of the question
+  W->>DB: vector search + full-text search (chunks of current, in-scope cards)
+  W->>W: Reciprocal Rank Fusion per card, top RAG_TOP_CARDS<br/>+ cards cited by the previous answer
+  W-->>B: event: sources
+  W->>M: instructions + last 3 exchanges + numbered cards + question (streamed)
+  M-->>W: text
+  W-->>B: event: delta … (as it is written)
+  W->>DB: answer stored with sources and cited numbers
+  W-->>B: event: done (stored message)
+```
+
+- **Retrieval**: the question is embedded with the configured model and compared by cosine distance (`<=>`, exact
+  scan of the snapshot's chunks, no ANN index) with the chunks of the current version of every card in scope (not
+  excluded; only approved with "Solo schede approvate"). In parallel, a full-text search looks for any word of the
+  question (3+ characters, `simple` configuration: names, codes and messages match across languages). Each list
+  gives each card `1 / (60 + rank of its best chunk)`; the sums rank the cards.
+- **Prompt** (`chat-answer`): the best cards as plain text, numbered `[1]`, `[2]`…, sized to
+  `AI_CONTEXT_TOKENS - AI_CHAT_MAX_OUTPUT_TOKENS` (the first card is shortened if it does not fit alone, the others
+  are left out). The model answers in the language of the question, only from the sources, citing them by number,
+  and says so when the sources do not contain the answer.
+- **Citations**: numbers outside the sources are ignored. The page shows each cited card with its review state and
+  opens its review page; unreferenced sources are shown dimmed.
+- **Conversations** belong to the user who started them (`chat_conversation`, `chat_message`). Follow-up questions
+  get the last three complete exchanges and the cards cited by the previous answer.
+- **Errors and interruptions**: a model error stores the partial answer as `failed` and sends an `error` event with
+  the short message; closing the page (or "Interrompi") interrupts the model call and stores the partial answer as
+  `interrupted`. Every model call goes to `model_call` (phases `chat` with tasks `chat-query` and `chat-answer`).
+
+## Test questions
+
+The tests page (`/projects/<id>/tests`) holds questions a user could ask, each tied to the feature whose card
+answers it.
+
+- **Generation** ("Genera domande", `questions` job, phase `generate`): for every non-excluded card without generated
+  questions, the `test-questions` prompt writes `TEST_QUESTIONS_PER_CARD` questions in `TEST_QUESTIONS_LANGUAGE`, with
+  the expected answer. Resumable; running it again only covers new cards.
+- **Manual questions**: add, edit and delete, with an optional expected answer.
+- Like corrections, questions belong to the project and to the feature **name**: after a new feature map they are
+  re-attached by name; the others are shown as orphans and not run.
+- **Test run** ("Esegui i test", `evaluation` job, run id = job id):
+
+```mermaid
+flowchart LR
+  p["prepare<br/>run row, questions in scope"] --> a["answer<br/>for each question: retrieval,<br/>chat answer, judgment"] --> f["finalize<br/>totals"]
+```
+
+| Phase      | What it does                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare`  | Fails at once without chat or embedding model. Creates (or resets) the run with the models, `RAG_TOP_CARDS`, the "approved only" option and the number of questions whose card is in scope.                                                                                                                                                                                               |
+| `answer`   | For each question not answered yet by this run: same retrieval and prompt as the chat (no history); records the rank of the expected card among the retrieved ones, the answer, the cited features; then `answer-judge` compares the answer with the expected card (and expected answer): `correct`, `partial`, `incorrect`, `no_answer`. An invalid judgment leaves the result unjudged. |
+| `finalize` | Totals: questions whose card was retrieved (within `RAG_TOP_CARDS`) and ranked first, mean reciprocal rank, verdict counts. Run `ready` (`failed` when the job fails for good).                                                                                                                                                                                                           |
+
 ## Deleting a project
 
 "Elimina progetto" on the project page, confirmed by typing the project name. Refused while a job of the project is
 running (queued jobs are deleted with it). In order: the project's knowledge in the `rag` schema (snapshots,
 summaries, features, cards, verifications, corrections; deleted explicitly since `rag` has no foreign keys), then the
 project with its snapshots, files, symbols, jobs and events (cascade), the masked blobs no other project uses, and the
-uploaded archives on disk. The model call log is kept (its references become null).
+uploaded archives on disk. The `rag` deletion includes the embedding index, the test questions and runs; chat
+conversations cascade with the project. The model call log is kept (its references become null).
 
 ## Real-time progress
 

@@ -13,7 +13,8 @@ import {
   fileSummary,
   moduleSummary,
   ragSnapshot,
-  symbolSummary
+  symbolSummary,
+  testQuestion
 } from "./schema/rag.ts"
 
 /** Rows per INSERT: well below the 65 535 bind parameters of a Postgres statement. */
@@ -338,9 +339,10 @@ export const KnowledgeRepositoryLive = Layer.effect(
       deleteProject: (projectId) =>
         query("knowledge.deleteProject", () =>
           db.transaction(async (tx) => {
-            // Everything else cascades from rag.snapshot; corrections belong to the project.
+            // Everything else cascades from rag.snapshot; corrections and test questions belong to the project.
             await tx.delete(ragSnapshot).where(eq(ragSnapshot.projectId, projectId))
             await tx.delete(correction).where(eq(correction.projectId, projectId))
+            await tx.delete(testQuestion).where(eq(testQuestion.projectId, projectId))
           })
         ),
 

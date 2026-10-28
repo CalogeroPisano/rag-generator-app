@@ -38,14 +38,15 @@ packages/core   domain (Effect): schemas, errors, config, ports (repository inte
 packages/db     Drizzle schema + migrations, repository implementations (Layers), LISTEN/NOTIFY listener
 packages/analysis  acquisition primitives (safe zip extraction, git clone, filters, languages, secret masking) and
                    static analysis (src/parsing: tree-sitter grammars, queries, extraction, import resolution)
-packages/ai     AI layer: LanguageModel (AI SDK + OpenAI-compatible provider), AiConfig, ModelCallRecorder port,
-                versioned prompts + output schemas (src/prompts), scriptedLanguageModel for tests
+packages/ai     AI layer: LanguageModel (structured + streamed text) and EmbeddingModel (AI SDK + OpenAI-compatible
+                provider, undici fetch), AiConfig, ModelCallRecorder port, versioned prompts + output schemas
+                (src/prompts), scriptedLanguageModel / scriptedEmbeddingModel for tests
 ```
 
 Dependency direction: `analysis`, `ai` ← `core` ← `db` ← apps. `core` defines the repository **ports**
 (`ProjectRepository`, `SnapshotRepository`, `JobRepository`, `AnalysisRepository`, `UnderstandingRepository`,
-`KnowledgeRepository` in `core/src/ports.ts`; `ModelCallRecorder` in `ai`); `db` implements them. Never
-import `db` from `core`.
+`KnowledgeRepository`, `IndexRepository`, `EvaluationRepository`, `ChatRepository` in `core/src/ports.ts`;
+`ModelCallRecorder` in `ai`); `db` implements them. Never import `db` from `core`.
 
 ### Data flow (phase 1)
 
@@ -74,15 +75,14 @@ import `db` from `core`.
 ### Data flow (phase 3: AI understanding)
 
 1. Manual: "Genera schede" → `startUnderstanding` → `requestUnderstanding` (needs analysis ready) queues an
-   `understanding` job. The web runtime only has `AiConfig` (to show whether `AI_MODEL` is set); only the worker calls
-   models.
+   `understanding` job. Only the worker runs it (the web calls models for the chat only, phase 5).
 2. `understandingPipeline` (`core/src/understanding/pipeline.ts`): `prepare` (reset rag data) → `summarize-files`
    (code without tests + config files; large files split by `splitIntoParts`, then rolled up) → `summarize-modules`
    (`planModules`, bottom-up) → `map-features` (batched by token budget, `normalizeFeatures` / `mergeFeatures`) →
    `generate-cards` (`buildCardExcerpts`, `checkReferences`) → `finalize`. Summary/card phases skip stored items
    (resumable); an answer still invalid after the correction request skips the item.
-3. `LanguageModel.generateObject`: AI SDK `streamText` (always streamed: Node's fetch drops responses whose headers
-   take > 5 min, common on CPU) + `Output.object(jsonSchema(Schema.toJsonSchemaDocument))`, text parsed at the end,
+3. `LanguageModel.generateObject`: AI SDK `streamText` (always streamed, over undici's `fetch` with no headers/body
+   timeout: `ai/src/fetch.ts`) + `Output.object(jsonSchema(Schema.toJsonSchemaDocument))`, text parsed at the end,
    `maxRetries: 0` (Effect retry with backoff instead), `Effect.timeout`, `Semaphore` for `AI_CONCURRENCY`, decode with
    `Schema.toCodecJson`, one correction request, then `AiError(invalid_output)`. Every HTTP call → `ModelCallRecorder`
    → `public.model_call` (metadata only).
@@ -105,6 +105,28 @@ import `db` from `core`.
 5. `deleteProject`: refused if a job is running; `KnowledgeRepository.deleteProject` (rag rows + corrections) then
    `ProjectRepository.delete` (cascade, orphan blobs) and upload files.
 
+### Data flow (phase 5: index, RAG chat, test questions)
+
+1. `indexing` job (`core/src/rag/indexing.ts`, phase `index`), queued by `requestIndexing` (no-op without
+   `EMBEDDING_MODEL`) after understanding `finalize`, card jobs (regenerate/correct), `editCard`, and the "Aggiorna /
+   Ricostruisci" buttons; `enqueue({ dedupe: "queued" })`: a running job does not absorb new requests. Cards not
+   excluded without chunks for (version, model, `CARD_CHUNK.version`) → `cardChunks` (overview + one per section) →
+   `EmbeddingModel.embed` → `IndexRepository.saveChunks` (skipped if the card version changed). Bump `CARD_CHUNK`
+   when the chunk text changes.
+2. `rag.chunk`: `vector` without fixed dimension (+ `model`, `dimensions`), generated `tsvector` ('simple') with GIN.
+   `retrieveCards` (`rag/retrieval.ts`): exact cosine search + full-text OR of the question words, Reciprocal Rank
+   Fusion per card; status filter at query time (not excluded / approved only), outdated card versions ignored.
+3. Chat: `POST /api/chat` (server route, SSE, CSRF middleware) → `askQuestion` (`rag/chat.ts`): conversation of the
+   session user, question stored, `prepareAnswer` (top `RAG_TOP_CARDS` + cards cited by the previous answer, last 3
+   exchanges, sized to `AI_CONTEXT_TOKENS - AI_CHAT_MAX_OUTPUT_TOKENS`), `LanguageModel.generateText` with
+   `onDelta` (no retry once text was delivered), `citedSources`, answer stored (`failed` / `interrupted` with the
+   partial text). Conversations in `public.chat_conversation` / `chat_message`.
+4. Test questions (`rag/evaluation.ts`, `rag.test_question`, belong to project + feature name like corrections,
+   `reattachQuestions` after `replaceFeatures`): `questions` job (phase `generate`, cards without generated ones) and
+   `evaluation` job (`prepare` → `answer` → `finalize`, run id = job id, payload `{ approvedOnly }`): retrieval rank of
+   the expected card, chat answer without history, `answer-judge` verdict; totals in `rag.test_run`.
+5. Understanding refuses to start while card, questions or evaluation jobs are active, and vice versa.
+
 ### Jobs and phases
 
 - A phase has a stable `name`, takes only the job, is **idempotent** (clears/overwrites what a previous attempt
@@ -124,6 +146,9 @@ import `db` from `core`.
 - Findings record rule + line only, never the secret.
 - Models receive masked content only; prompts/answers are never logged or stored in `model_call` (errors: name +
   HTTP status only). Never pass a string model id to the AI SDK (it would resolve through the Vercel AI Gateway).
+  Model HTTP calls use `modelFetch` (undici), never the global fetch.
+- The chat sends models only the question, the conversation and card text (never code); chat answers are stored in
+  `chat_message` only and rendered as plain text. Conversations are filtered by the session user everywhere.
 - Git tokens: encrypted at rest, passed to isomorphic-git only via `onAuth`, never in URLs, logs or errors.
 - Zip: paths sanitised (`sanitizeArchivePath` + `resolveInside`), symlinks never materialised, sizes enforced on
   inflated bytes (headers are not trusted).
@@ -165,6 +190,7 @@ import `db` from `core`.
 - Local dev with Ollama on CPU: model `code-to-rag-dev` = `qwen3:4b-instruct` with `num_ctx 8192`; run the worker
   locally with `AI_MODEL=code-to-rag-dev AI_CONTEXT_TOKENS=8192 AI_MAX_OUTPUT_TOKENS=2048 AI_CONCURRENCY=1
 AI_TIMEOUT="60 minutes"` (about 1.5 tokens/s: a card takes 15–30 minutes). Stop it by PID, not `pkill -f`.
+  Embeddings: `EMBEDDING_MODEL=bge-m3` (`ollama pull bge-m3`); the web needs the same AI/embedding variables (chat).
 
 ## Licensing
 
@@ -187,6 +213,10 @@ of every new dependency before adding it.
 - TypeScript 6.0.x (typescript-eslint does not support 6.1+ / 7 yet).
 - AI knowledge in a separate Postgres schema `rag`, self-contained (no FKs to `public`); cards/summaries in English;
   understanding started manually as its own job. Dev model: Ollama `qwen3:4b-instruct` (CPU).
+- Phase 5 (user's choices): index = every card except excluded ones (status shown, "approved only" filter); chat in
+  the web process, streamed, conversations stored per user, in-app only (no external API yet); multilingual
+  embeddings (`bge-m3` suggested) + hybrid search (pgvector + full-text, RRF), exact search (no ANN index); test
+  questions generated + manual, test runs judged by the model. Model calls use undici's fetch (MIT).
 
 ## Status
 
@@ -194,7 +224,8 @@ of every new dependency before adding it.
 - Phase 2 (static analysis with tree-sitter: TS/JS, Java, C#, Go, Python): implemented.
 - Phase 3 (AI understanding: summaries, feature map, cards with line references, `rag` schema): implemented.
 - Phase 4 (verification and review, project deletion): implemented.
-- Next: phase 5 (embeddings in pgvector, RAG chat with citations, test questions). Also remove the 5-minute
-  time-to-first-token limit of Node's fetch on model calls (see `docs/flows.md`, Streaming).
+- Phase 5 (embedding index in pgvector, RAG chat with citations, test questions; no 5-minute time-to-first-token
+  limit): implemented.
+- Next: phase 6 (incremental updates).
 - Roadmap (user's order): 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
   archive + manifest, and SQL for another Postgres; import), last.

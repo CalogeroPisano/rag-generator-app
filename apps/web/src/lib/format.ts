@@ -1,4 +1,5 @@
 import type { ExclusionReason } from "@code-to-rag/analysis"
+import type { JobStateWire } from "@/lib/job-stream"
 
 export const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`
@@ -50,12 +51,15 @@ export const phaseLabels: Record<string, string> = {
   "generate-cards": "Generazione schede",
   "verify-cards": "Verifica schede",
   process: "Elaborazione della scheda",
+  index: "Indicizzazione delle schede",
+  generate: "Generazione delle domande",
+  answer: "Risposte e valutazione",
   finalize: "Completamento"
 }
 
 /** Phases of each job type, in execution order, and the title of its progress card. */
 export const jobTypes: Record<
-  "acquisition" | "analysis" | "understanding" | "card",
+  JobStateWire["type"],
   { readonly title: string; readonly phases: ReadonlyArray<string> }
 > = {
   acquisition: { title: "Acquisizione", phases: ["fetch", "ingest", "finalize"] },
@@ -72,7 +76,10 @@ export const jobTypes: Record<
       "finalize"
     ]
   },
-  card: { title: "Operazione su una scheda", phases: ["process"] }
+  card: { title: "Operazione su una scheda", phases: ["process"] },
+  indexing: { title: "Indicizzazione per la chat", phases: ["index"] },
+  questions: { title: "Generazione delle domande di test", phases: ["generate"] },
+  evaluation: { title: "Esecuzione dei test", phases: ["prepare", "answer", "finalize"] }
 }
 
 export const formatDuration = (ms: number): string => {

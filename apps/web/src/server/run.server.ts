@@ -24,6 +24,9 @@ const userFacing = (error: unknown): UserFacingError | "not_found" | undefined =
       }
     case "SchemaError":
       return { message: "Dati non validi", status: 400 }
+    // Model errors carry a short Italian description, never prompt or answer text.
+    case "AiError":
+      return { message: tagged.message ?? "Errore del modello", status: 502 }
     default:
       return undefined
   }

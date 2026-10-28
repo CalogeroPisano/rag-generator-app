@@ -70,7 +70,7 @@ export const JobRepositoryLive = Layer.effect(
                   eq(job.snapshotId, input.snapshotId),
                   eq(job.type, input.type),
                   input.dedupeKey === undefined ? isNull(job.dedupeKey) : eq(job.dedupeKey, input.dedupeKey),
-                  inArray(job.status, ["queued", "running"])
+                  inArray(job.status, input.dedupe === "queued" ? ["queued"] : ["queued", "running"])
                 )
               )
             if (active !== undefined) return active.id

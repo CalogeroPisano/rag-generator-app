@@ -1,10 +1,12 @@
 import { queryOptions, useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query"
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, Link } from "@tanstack/react-router"
 import {
   FileArchiveIcon,
+  FlaskConicalIcon,
   GitBranchIcon,
   GitCommitHorizontalIcon,
   HashIcon,
+  MessagesSquareIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
   SparklesIcon
@@ -17,6 +19,7 @@ import { FileExplorer, type FileSelection } from "@/components/file-explorer"
 import { JobProgress } from "@/components/job-progress"
 import { PageHeader } from "@/components/page-header"
 import { DeleteProjectDialog } from "@/components/projects/delete-project-dialog"
+import { IndexStatusCard } from "@/components/rag/index-status"
 import { AnalysisStatusBadge, SnapshotStatusBadge, UnderstandingStatusBadge } from "@/components/status-badge"
 import { FeaturesPanel } from "@/components/understanding/features-panel"
 import { Badge } from "@/components/ui/badge"
@@ -176,6 +179,22 @@ function ProjectPage() {
         actions={
           <>
             {snapshot !== null && <SnapshotStatusBadge status={snapshot.status} />}
+            {snapshot?.understandingStatus === "ready" && (
+              <>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to="/projects/$projectId/tests" params={{ projectId }}>
+                    <FlaskConicalIcon data-icon="inline-start" />
+                    Domande di test
+                  </Link>
+                </Button>
+                <Button size="sm" asChild>
+                  <Link to="/projects/$projectId/chat" params={{ projectId }}>
+                    <MessagesSquareIcon data-icon="inline-start" />
+                    Chat
+                  </Link>
+                </Button>
+              </>
+            )}
             <DeleteProjectDialog
               projectId={project.id}
               projectName={project.name}
@@ -312,7 +331,8 @@ function ProjectPage() {
               <AnalysisPending status={readySnapshot.analysisStatus} />
             )}
           </TabsContent>
-          <TabsContent value="features">
+          <TabsContent value="features" className="flex flex-col gap-4">
+            {understandingReady && <IndexStatusCard snapshotId={readySnapshot.id} projectId={projectId} />}
             {understandingReady ? (
               <FeaturesPanel
                 projectId={projectId}

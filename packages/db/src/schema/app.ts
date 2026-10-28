@@ -285,3 +285,51 @@ export const modelCall = pgTable(
     check("model_call_outcome_check", sql`${table.outcome} in ('success', 'invalid_output', 'error', 'timeout')`)
   ]
 )
+
+/** Chat conversations about a project: private to the user who started them. */
+export const chatConversation = pgTable(
+  "chat_conversation",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt()
+  },
+  (table) => [index("chat_conversation_user_idx").on(table.projectId, table.userId, table.updatedAt)]
+)
+
+/**
+ * Messages of a conversation. Assistant messages keep the cards given to the
+ * model (`sources`, numbered from 1) and the numbers the answer cites.
+ */
+export const chatMessage = pgTable(
+  "chat_message",
+  {
+    id: uuid("id").primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => chatConversation.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    status: text("status").notNull(),
+    sources: jsonb("sources").notNull().default([]),
+    citations: integer("citations")
+      .array()
+      .notNull()
+      .default(sql`'{}'::integer[]`),
+    snapshotId: uuid("snapshot_id").references(() => snapshot.id, { onDelete: "set null" }),
+    model: text("model"),
+    createdAt: createdAt()
+  },
+  (table) => [
+    index("chat_message_conversation_idx").on(table.conversationId, table.createdAt),
+    check("chat_message_role_check", sql`${table.role} in ('user', 'assistant')`),
+    check("chat_message_status_check", sql`${table.status} in ('complete', 'failed', 'interrupted')`)
+  ]
+)

@@ -24,4 +24,12 @@ describe("AiConfig", () => {
     expect(JSON.stringify(config)).not.toContain("sk-test")
     expect(config.contextTokens).toBe(8192)
   })
+
+  it("defaults the embedding endpoint and key to the chat ones", async () => {
+    const config = await load({ AI_BASE_URL: "http://vllm:8000/v1", AI_API_KEY: "sk-chat", EMBEDDING_MODEL: "bge-m3" })
+    expect(config.embedding.baseUrl).toBe("http://vllm:8000/v1")
+    expect(config.embedding.model).toBe("bge-m3")
+    expect(Redacted.value(config.embedding.apiKey!)).toBe("sk-chat")
+    expect((await load({})).embedding.model).toBeUndefined()
+  })
 })

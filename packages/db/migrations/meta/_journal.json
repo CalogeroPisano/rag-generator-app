@@ -29,6 +29,13 @@
       "when": 1792765374662,
       "tag": "0003_review",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793175775411,
+      "tag": "0004_rag_index_chat_tests",
+      "breakpoints": true
     }
   ]
 }

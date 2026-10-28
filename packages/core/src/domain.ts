@@ -1,4 +1,4 @@
-import { CardContent, CardReference, CardSectionName, StatementVerdict } from "@code-to-rag/ai"
+import { AnswerVerdict, CardContent, CardReference, CardSectionName, StatementVerdict } from "@code-to-rag/ai"
 import { ExclusionReason, ImportKind, SymbolKind } from "@code-to-rag/analysis"
 import { Schema } from "effect"
 
@@ -290,9 +290,141 @@ export const CardJobPayload = Schema.Struct({
 })
 export type CardJobPayload = typeof CardJobPayload.Type
 
+// ── RAG: index, chat, test questions (phase 5) ─────────────────────────────
+
+/** Embedding index of a snapshot's cards. */
+export class IndexStatus extends Schema.Class<IndexStatus>("IndexStatus")({
+  /** Configured embedding model; null when embeddings are not configured. */
+  model: Schema.NullOr(Schema.String),
+  /** Cards that belong in the index (all but the excluded ones). */
+  indexableCards: Schema.Int,
+  /** Of those, cards whose current version is indexed with the configured model. */
+  indexedCards: Schema.Int,
+  approvedCards: Schema.Int,
+  chunks: Schema.Int,
+  indexedAt: Schema.NullOr(Schema.Date)
+}) {}
+
+/** A card given to the chat model as a numbered source. */
+export const ChatSource = Schema.Struct({
+  cardId: Schema.String,
+  featureId: Schema.String,
+  featureName: Schema.String,
+  title: Schema.String,
+  status: CardStatus
+})
+export type ChatSource = typeof ChatSource.Type
+
+export const ChatMessageStatus = Schema.Literals(["complete", "failed", "interrupted"])
+export type ChatMessageStatus = typeof ChatMessageStatus.Type
+
+export class ChatMessage extends Schema.Class<ChatMessage>("ChatMessage")({
+  id: Schema.String,
+  role: Schema.Literals(["user", "assistant"]),
+  content: Schema.String,
+  status: ChatMessageStatus,
+  /** Sources given to the model, numbered from 1 in this order (assistant messages). */
+  sources: Schema.Array(ChatSource),
+  /** Source numbers cited by the answer. */
+  citations: Schema.Array(Schema.Int),
+  snapshotId: Schema.NullOr(SnapshotId),
+  model: Schema.NullOr(Schema.String),
+  createdAt: Schema.Date
+}) {}
+
+export class ChatConversation extends Schema.Class<ChatConversation>("ChatConversation")({
+  id: Schema.String,
+  projectId: ProjectId,
+  title: Schema.String,
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date
+}) {}
+
+export class ChatConversationView extends Schema.Class<ChatConversationView>("ChatConversationView")({
+  conversation: ChatConversation,
+  messages: Schema.Array(ChatMessage)
+}) {}
+
+export const TestQuestionOrigin = Schema.Literals(["generated", "manual"])
+export type TestQuestionOrigin = typeof TestQuestionOrigin.Type
+
+/** A test question of the chat; like corrections, it belongs to the project and to a feature name. */
+export class TestQuestion extends Schema.Class<TestQuestion>("TestQuestion")({
+  id: Schema.String,
+  /** Feature of the current map with the same name; null when it disappeared (orphan). */
+  featureId: Schema.NullOr(Schema.String),
+  featureName: Schema.String,
+  question: Schema.String,
+  expectedAnswer: Schema.NullOr(Schema.String),
+  origin: TestQuestionOrigin,
+  authorName: Schema.NullOr(Schema.String),
+  createdAt: Schema.Date
+}) {}
+
+export const TestRunStatus = Schema.Literals(["running", "ready", "failed"])
+export type TestRunStatus = typeof TestRunStatus.Type
+
+export class TestRun extends Schema.Class<TestRun>("TestRun")({
+  /** Same id as the evaluation job. */
+  id: Schema.String,
+  snapshotId: SnapshotId,
+  status: TestRunStatus,
+  model: Schema.String,
+  embeddingModel: Schema.String,
+  /** Cards given to the chat model per question. */
+  topK: Schema.Int,
+  approvedOnly: Schema.Boolean,
+  questions: Schema.Int,
+  /** Questions whose expected card was among the retrieved ones / ranked first. */
+  retrievalHits: Schema.Int,
+  firstHits: Schema.Int,
+  /** Mean reciprocal rank of the expected card (0 when not retrieved). */
+  mrr: Schema.Number,
+  correct: Schema.Int,
+  partial: Schema.Int,
+  incorrect: Schema.Int,
+  noAnswer: Schema.Int,
+  /** Answers the judge could not assess. */
+  unjudged: Schema.Int,
+  startedAt: Schema.Date,
+  finishedAt: Schema.NullOr(Schema.Date)
+}) {}
+
+export class TestResult extends Schema.Class<TestResult>("TestResult")({
+  questionId: Schema.String,
+  question: Schema.String,
+  expectedFeatureId: Schema.String,
+  expectedFeatureName: Schema.String,
+  /** Retrieved cards, best first. */
+  retrieved: Schema.Array(Schema.Struct({ featureId: Schema.String, featureName: Schema.String })),
+  /** 1-based position of the expected card among the retrieved ones; null when missing. */
+  rank: Schema.NullOr(Schema.Int),
+  answer: Schema.String,
+  citedFeatureIds: Schema.Array(Schema.String),
+  verdict: Schema.NullOr(AnswerVerdict),
+  note: Schema.NullOr(Schema.String)
+}) {}
+
+export class TestRunView extends Schema.Class<TestRunView>("TestRunView")({
+  run: TestRun,
+  results: Schema.Array(TestResult)
+}) {}
+
+/** Input of an `evaluation` job. */
+export const EvaluationJobPayload = Schema.Struct({ approvedOnly: Schema.Boolean })
+export type EvaluationJobPayload = typeof EvaluationJobPayload.Type
+
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
-export const JobType = Schema.Literals(["acquisition", "analysis", "understanding", "card"])
+export const JobType = Schema.Literals([
+  "acquisition",
+  "analysis",
+  "understanding",
+  "card",
+  "indexing",
+  "questions",
+  "evaluation"
+])
 export type JobType = typeof JobType.Type
 
 export const JobStatus = Schema.Literals(["queued", "running", "succeeded", "failed", "cancelled"])
@@ -318,8 +450,8 @@ export class Job extends Schema.Class<Job>("Job")({
   maxAttempts: Schema.Int,
   lastError: Schema.NullOr(Schema.String),
   progress: Schema.NullOr(JobProgress),
-  /** Job-specific input; only card jobs have one. */
-  payload: Schema.NullOr(CardJobPayload),
+  /** Job-specific input: card and evaluation jobs have one. */
+  payload: Schema.NullOr(Schema.Union([CardJobPayload, EvaluationJobPayload])),
   createdAt: Schema.Date,
   updatedAt: Schema.Date,
   finishedAt: Schema.NullOr(Schema.Date)
@@ -381,6 +513,16 @@ export const CreateProjectInput = Schema.Struct({
   source: Schema.Union([ZipSource, GitSource])
 })
 export type CreateProjectInput = typeof CreateProjectInput.Type
+
+const QuestionText = Schema.Trimmed.check(Schema.isMinLength(3), Schema.isMaxLength(2000))
+
+/** A test question written by a reviewer. */
+export const TestQuestionInput = Schema.Struct({
+  featureId: Schema.String.check(Schema.isUUID()),
+  question: QuestionText,
+  expectedAnswer: Schema.NullOr(Schema.Trimmed.check(Schema.isMaxLength(4000)))
+})
+export type TestQuestionInput = typeof TestQuestionInput.Type
 
 /** Manual edit of a card by a reviewer. */
 export const EditCardInput = Schema.Struct({ cardId: Schema.String, content: CardContent })

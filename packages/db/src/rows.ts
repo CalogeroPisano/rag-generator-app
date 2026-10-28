@@ -1,5 +1,13 @@
+import { CardContent } from "@code-to-rag/ai"
 import {
+  CardStatus,
   CardView,
+  ChatConversation,
+  ChatMessage,
+  IndexStatus,
+  TestQuestion,
+  TestResult,
+  TestRun,
   Correction,
   DatabaseError,
   FeatureMap,
@@ -45,6 +53,14 @@ export const decodeCard = decode(CardView, "rag card")
 export const decodeCorrection = decode(Correction, "rag correction")
 export const decodeFileSummary = decode(FileSummaryView, "rag file summary")
 export const decodeModelCallStats = decode(ModelCallStats, "model_call stats")
+export const decodeCardContent = decode(CardContent, "rag card content")
+export const decodeCardStatus = decode(CardStatus, "rag card status")
+export const decodeIndexStatus = decode(IndexStatus, "rag index status")
+export const decodeTestQuestion = decode(TestQuestion, "rag test_question")
+export const decodeTestRun = decode(TestRun, "rag test_run")
+export const decodeTestResult = decode(TestResult, "rag test_result")
+export const decodeChatConversation = decode(ChatConversation, "chat_conversation")
+export const decodeChatMessage = decode(ChatMessage, "chat_message")
 
 export const projectFromRow = (row: typeof project.$inferSelect) =>
   decodeProject({

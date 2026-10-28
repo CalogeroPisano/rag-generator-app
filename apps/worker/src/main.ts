@@ -1,4 +1,4 @@
-import { AiConfig, LanguageModel } from "@code-to-rag/ai"
+import { AiConfig, EmbeddingModel, LanguageModel } from "@code-to-rag/ai"
 import { AppConfig, CodeAnalyzer, SecretBox } from "@code-to-rag/core"
 import { DatabaseLive } from "@code-to-rag/db"
 import { Config, Effect, Exit, Fiber, Layer, Logger } from "effect"
@@ -14,7 +14,7 @@ const LoggerLive = Layer.unwrap(
 )
 
 // The model call log (ModelCallRecorder) is written by the database layer.
-const AiLive = LanguageModel.layer.pipe(Layer.provide(AiConfig.layer))
+const AiLive = Layer.mergeAll(LanguageModel.layer, EmbeddingModel.layer).pipe(Layer.provide(AiConfig.layer))
 
 const WorkerLive = Layer.mergeAll(
   SecretBox.layer,

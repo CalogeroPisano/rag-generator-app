@@ -10,6 +10,10 @@ erDiagram
   user ||--o{ session : ""
   user ||--o{ account : ""
   user |o--o{ project : "created_by"
+  user ||--o{ chat_conversation : ""
+  project ||--o{ chat_conversation : ""
+  chat_conversation ||--o{ chat_message : ""
+  snapshot |o--o{ chat_message : "snapshot_id (set null)"
   project ||--o{ snapshot : ""
   project ||--o{ job : ""
   snapshot ||--o{ job : ""
@@ -117,6 +121,24 @@ erDiagram
     text message
     jsonb progress
   }
+  chat_conversation {
+    uuid id PK
+    uuid project_id FK
+    text user_id FK
+    text title "first question"
+    timestamptz updated_at
+  }
+  chat_message {
+    uuid id PK
+    uuid conversation_id FK
+    text role "user | assistant"
+    text content
+    text status "complete | failed | interrupted"
+    jsonb sources "[{cardId, featureId, featureName, title, status}]"
+    int_array citations "source numbers, from 1"
+    uuid snapshot_id FK
+    text model
+  }
 ```
 
 The `user`, `session`, `account` and `verification` tables belong to Better Auth (generated with its CLI).
@@ -146,6 +168,11 @@ The `user`, `session`, `account` and `verification` tables belong to Better Auth
 - **job**: queue and state. Partial indexes for queued jobs (`run_after, created_at`) and running jobs
   (`heartbeat_at`).
 - **job_event**: append-only log; the sequential id is used as the SSE event id.
+- **job (types)**: `acquisition`, `analysis`, `understanding`, `card`, `indexing`, `questions`, `evaluation`. `payload`
+  holds the input of card jobs (`{ cardId, featureId, operation }`) and test runs (`{ approvedOnly }`).
+- **chat_conversation / chat_message**: chat conversations, private to their user, deleted with the project or the
+  user. An assistant message keeps the cards given to the model (`sources`, copied: they stay readable after a
+  regeneration) and the numbers its answer cites.
 
 Rows read from the database are validated with the domain schemas (`packages/db/src/rows.ts`): an unexpected value
 produces an explicit error instead of flowing into the domain.
@@ -177,6 +204,11 @@ erDiagram
   card ||--o{ card_reference : ""
   card ||--o| card_verification : ""
   feature |o--o{ correction : "feature_id (set null)"
+  card ||--o{ chunk : ""
+  rag_snapshot ||--o{ chunk : ""
+  feature |o--o{ test_question : "feature_id (set null)"
+  rag_snapshot ||--o{ test_run : ""
+  test_run ||--o{ test_result : ""
 
   rag_snapshot {
     uuid id PK "same id as public.snapshot (no FK)"
@@ -270,6 +302,62 @@ erDiagram
     int start_line
     int end_line
   }
+  chunk {
+    bigint id PK
+    uuid snapshot_id FK
+    uuid card_id FK
+    int card_version
+    text section "overview or a card section"
+    text text
+    tsvector search_vector "generated: to_tsvector('simple', text)"
+    vector embedding "any dimension"
+    int dimensions
+    text model
+    int format_version
+  }
+  test_question {
+    uuid id PK
+    uuid project_id "no FK"
+    uuid feature_id FK "null when orphan"
+    text feature_name
+    text feature_key
+    text question
+    text expected_answer
+    text origin "generated | manual"
+    text author_name
+  }
+  test_run {
+    uuid id PK "= evaluation job id"
+    uuid snapshot_id FK
+    text status "running | ready | failed"
+    text model
+    text embedding_model
+    int top_k
+    bool approved_only
+    int questions
+    int retrieval_hits
+    int first_hits
+    float mrr
+    int correct
+    int partial
+    int incorrect
+    int no_answer
+    int unjudged
+  }
+  test_result {
+    bigint id PK
+    uuid run_id FK
+    uuid question_id "no FK"
+    text question
+    uuid expected_feature_id
+    text expected_feature_name
+    jsonb retrieved "[{featureId, featureName}]"
+    int rank "null when not retrieved"
+    text answer
+    text_array cited_feature_ids
+    text verdict "correct | partial | incorrect | no_answer"
+    text note
+  }
 ```
 
 - **card.content** is the structured card (`CardContent` in `packages/ai/src/prompts/card.ts`): title, summary and the
@@ -283,10 +371,19 @@ erDiagram
   users, like the rest of `rag`).
 - `prompt_version` and `model` are stored with every summary, feature and card.
 
+- **chunk**: the embedding index of the chat. One overview chunk per card plus one per non-empty section. The vector
+  column has no fixed dimension (`vector`): `model` and `dimensions` are stored with each row and a search only
+  compares vectors of the configured model. Searches are exact (sequential scan of the snapshot's chunks through the
+  `(snapshot_id, model)` index, no ANN index): a project has hundreds to a few thousand chunks. Chunks of an older
+  card version are ignored until the card is re-indexed. `search_vector` (GIN index) serves the full-text search.
+- **test_question**: like `correction`, belongs to the project and a feature name, re-attached after a new feature
+  map, deleted only with the project. `model`/`prompt_version` are set for generated questions.
+- **test_run / test_result**: a run of the test questions against the chat; results copy question and feature, which
+  may change or disappear later. `rank` is the position of the expected card among the retrieved ones.
+
 ## Tables of the next phases
 
-They will be added with new migrations in their phases: `embedding`, `test_question`, `test_run` (5). Phase 7 adds no
-tables: it exports the `rag` data of a project.
+Phase 7 adds no tables: it exports the `rag` data of a project.
 
 The `job` table also has `payload` (input of `card` jobs) and `dedupe_key` (one active job per card).
 

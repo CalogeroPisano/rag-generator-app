@@ -5,6 +5,29 @@
 
 name: code-to-rag
 
+# Model settings: the worker runs the understanding, test questions and indexing; the web runs the RAG chat.
+x-ai-env: &ai-env
+  AI_MODEL: ${AI_MODEL:-}
+  AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434/v1}
+  AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-ollama}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_STRUCTURED_OUTPUTS: ${AI_STRUCTURED_OUTPUTS:-true}
+  AI_TIMEOUT: ${AI_TIMEOUT:-5 minutes}
+  AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
+  AI_CONCURRENCY: ${AI_CONCURRENCY:-2}
+  AI_CONTEXT_TOKENS: ${AI_CONTEXT_TOKENS:-16384}
+  AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-4096}
+  AI_CHAT_MAX_OUTPUT_TOKENS: ${AI_CHAT_MAX_OUTPUT_TOKENS:-1024}
+  AI_TEMPERATURE: ${AI_TEMPERATURE:-0.1}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
+  RAG_TOP_CARDS: ${RAG_TOP_CARDS:-5}
+  RAG_CANDIDATES: ${RAG_CANDIDATES:-40}
+  TEST_QUESTIONS_LANGUAGE: ${TEST_QUESTIONS_LANGUAGE:-Italian}
+  TEST_QUESTIONS_PER_CARD: ${TEST_QUESTIONS_PER_CARD:-3}
+
 x-app-env: &app-env
   DATABASE_URL: postgres://${POSTGRES_USER:-code_to_rag}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-code_to_rag}
   APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env}
@@ -15,8 +38,6 @@ x-app-env: &app-env
   ACQUISITION_MAX_FILE_MB: ${ACQUISITION_MAX_FILE_MB:-1}
   ACQUISITION_MAX_FILES: ${ACQUISITION_MAX_FILES:-50000}
   GIT_ALLOW_HTTP: ${GIT_ALLOW_HTTP:-false}
-  # AI model (OpenAI-compatible API). The web only reads AI_MODEL, to tell whether cards can be generated.
-  AI_MODEL: ${AI_MODEL:-}
 
 services:
   postgres:
@@ -50,7 +71,7 @@ services:
     image: code-to-rag/web:${APP_VERSION:-dev}
     restart: unless-stopped
     environment:
-      <<: *app-env
+      <<: [*app-env, *ai-env]
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
       BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:3000}
       AUTH_ALLOW_SIGNUP: ${AUTH_ALLOW_SIGNUP:-false}
@@ -59,6 +80,9 @@ services:
       - app-data:/data
     ports:
       - "${WEB_PORT:-3000}:3000"
+    # Lets AI_BASE_URL point to an Ollama running on the host: http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       migrate: { condition: service_completed_successfully }
 
@@ -67,18 +91,8 @@ services:
     image: code-to-rag/worker:${APP_VERSION:-dev}
     restart: unless-stopped
     environment:
-      <<: *app-env
+      <<: [*app-env, *ai-env]
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
-      AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434/v1}
-      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-ollama}
-      AI_API_KEY: ${AI_API_KEY:-}
-      AI_STRUCTURED_OUTPUTS: ${AI_STRUCTURED_OUTPUTS:-true}
-      AI_TIMEOUT: ${AI_TIMEOUT:-5 minutes}
-      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
-      AI_CONCURRENCY: ${AI_CONCURRENCY:-2}
-      AI_CONTEXT_TOKENS: ${AI_CONTEXT_TOKENS:-16384}
-      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-4096}
-      AI_TEMPERATURE: ${AI_TEMPERATURE:-0.1}
     # Lets AI_BASE_URL point to an Ollama running on the host: http://host.docker.internal:11434/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"

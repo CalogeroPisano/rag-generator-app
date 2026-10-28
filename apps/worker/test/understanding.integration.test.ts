@@ -4,6 +4,7 @@ import {
   makeLanguageModel,
   type OutputSchema,
   RollupOutput,
+  scriptedEmbeddingModel,
   scriptedLanguageModel,
   type StructuredRequest
 } from "@code-to-rag/ai"
@@ -50,6 +51,8 @@ const makeLayer = (databaseUrl: string) =>
   Layer.mergeAll(
     SecretBox.layer,
     CodeAnalyzer.layer,
+    // Embeddings not configured: no indexing jobs in the queue of these tests.
+    scriptedEmbeddingModel({ configured: false }),
     scriptedLanguageModel((request) => {
       calls.push(request.prompt.id)
       return respond(request)

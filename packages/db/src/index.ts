@@ -1,6 +1,9 @@
 import { Layer } from "effect"
 import { AnalysisRepositoryLive } from "./analysis-repository.ts"
+import { ChatRepositoryLive } from "./chat-repository.ts"
 import { Database } from "./client.ts"
+import { EvaluationRepositoryLive } from "./evaluation-repository.ts"
+import { IndexRepositoryLive } from "./index-repository.ts"
 import { JobRepositoryLive } from "./job-repository.ts"
 import { KnowledgeRepositoryLive } from "./knowledge-repository.ts"
 import { ProjectRepositoryLive } from "./project-repository.ts"
@@ -8,7 +11,10 @@ import { SnapshotRepositoryLive } from "./snapshot-repository.ts"
 import { ModelCallRecorderLive, UnderstandingRepositoryLive } from "./understanding-repository.ts"
 
 export * from "./analysis-repository.ts"
+export * from "./chat-repository.ts"
 export * from "./client.ts"
+export * from "./evaluation-repository.ts"
+export * from "./index-repository.ts"
 export * from "./job-events.ts"
 export * from "./job-repository.ts"
 export * from "./knowledge-repository.ts"
@@ -25,7 +31,10 @@ export const RepositoriesLive = Layer.mergeAll(
   AnalysisRepositoryLive,
   UnderstandingRepositoryLive,
   KnowledgeRepositoryLive,
-  ModelCallRecorderLive
+  ModelCallRecorderLive,
+  IndexRepositoryLive,
+  EvaluationRepositoryLive,
+  ChatRepositoryLive
 )
 
 /** Repositories plus the `Database` service itself (pool from `DATABASE_URL`). */

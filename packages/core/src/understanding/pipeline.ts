@@ -17,6 +17,7 @@ import {
   featureMapInstructions,
   FeatureMergeOutput,
   featureMergeInstructions,
+  EmbeddingModel,
   FILE_ROLLUP,
   FILE_SUMMARY,
   fileRollupInstructions,
@@ -40,8 +41,10 @@ import { AppConfig } from "../config.ts"
 import { type Job, JobId, type SnapshotId } from "../domain.ts"
 import { InvalidInputError, PhaseError } from "../errors.ts"
 import type { PhaseContext, Pipeline } from "../pipeline.ts"
+import { requestIndexing } from "../rag/indexing.ts"
 import {
   type Declaration,
+  EvaluationRepository,
   type FileForUnderstanding,
   JobRepository,
   KnowledgeRepository,
@@ -412,6 +415,7 @@ const mapFeatures = Effect.fn("understanding.mapFeatures")(
     yield* knowledge.replaceFeatures(job.snapshotId, features, provenance(model, FEATURE_MAP))
     const info = yield* understanding.snapshotInfo(job.snapshotId)
     yield* knowledge.reattachCorrections(job.snapshotId, info.projectId)
+    yield* (yield* EvaluationRepository).reattachQuestions(job.snapshotId, info.projectId)
     yield* progress({
       completed: batches.length,
       total: batches.length,
@@ -546,12 +550,21 @@ const finalize = Effect.fn("understanding.finalize")(
     const understanding = yield* UnderstandingRepository
     const counts = yield* knowledge.counts(job.snapshotId)
     yield* understanding.complete(job.snapshotId, counts)
+    // The new cards go into the chat's index (when embeddings are configured).
+    yield* requestIndexing(job.snapshotId)
   },
   (effect) => effect.pipe(Effect.mapError(toPhaseError("finalize")))
 )
 
 export const understandingPipeline: Pipeline<
-  JobRepository | KnowledgeRepository | LanguageModel | SnapshotRepository | UnderstandingRepository
+  | AppConfig
+  | EmbeddingModel
+  | EvaluationRepository
+  | JobRepository
+  | KnowledgeRepository
+  | LanguageModel
+  | SnapshotRepository
+  | UnderstandingRepository
 > = {
   type: "understanding",
   phases: [
@@ -580,9 +593,9 @@ export const requestUnderstanding = Effect.fn("requestUnderstanding")(function* 
   if (snapshot.status !== "ready" || snapshot.analysisStatus !== "ready") {
     return yield* new InvalidInputError({ message: "L'analisi statica del progetto non è ancora completata" })
   }
-  // A new feature map would replace the cards that card jobs are working on.
+  // A new feature map would replace the cards that card, question and test jobs are working on.
   const active = yield* jobs.active(snapshot.projectId)
-  if (active.some((job) => job.type === "card")) {
+  if (active.some((job) => job.type === "card" || job.type === "questions" || job.type === "evaluation")) {
     return yield* new InvalidInputError({ message: "Attendi la fine delle operazioni in corso sulle schede" })
   }
   const job = yield* jobs.enqueue({

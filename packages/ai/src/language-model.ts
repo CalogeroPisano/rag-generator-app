@@ -12,6 +12,7 @@ import {
 import { Cause, Context, type Duration, Effect, Exit, Layer, Redacted, Schedule, Schema, Semaphore } from "effect"
 import { AiConfig, type AiConfigShape } from "./config.ts"
 import { AiError } from "./errors.ts"
+import { modelFetch } from "./fetch.ts"
 import { type ModelCallContext, type ModelCallOutcome, ModelCallRecorder } from "./model-call.ts"
 
 /** A versioned prompt: changing the text of a prompt means bumping its version. */
@@ -33,17 +34,38 @@ export interface StructuredRequest<S extends OutputSchema> {
   readonly maxOutputTokens?: number | undefined
 }
 
+export interface TextRequest {
+  readonly prompt: PromptRef
+  readonly context: ModelCallContext
+  readonly instructions: string
+  /** Conversation, ending with the user message. It may contain card text: it is never logged. */
+  readonly messages: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly content: string }>
+  readonly maxOutputTokens?: number | undefined
+  /** Receives the answer while it is generated. Once text has been delivered the call is not retried. */
+  readonly onDelta?: ((delta: string) => void) | undefined
+}
+
+export interface TextAnswer {
+  readonly text: string
+  /** The model stopped at the output token limit. */
+  readonly truncated: boolean
+}
+
 export interface LanguageModelShape {
   /** Model id, recorded with every generated artifact. */
   readonly modelId: string | undefined
   /** Token budget of a single call (input + output). */
   readonly contextTokens: number
   readonly maxOutputTokens: number
+  /** Output limit of a text (chat) answer. */
+  readonly chatMaxOutputTokens: number
   /**
    * Asks for a structured answer. An answer that does not match the schema gets
    * one correction request; if that is invalid too, fails with `invalid_output`.
    */
   generateObject<S extends OutputSchema>(request: StructuredRequest<S>): Effect.Effect<S["Type"], AiError>
+  /** Asks for a plain text answer (chat), always streamed. */
+  generateText(request: TextRequest): Effect.Effect<TextAnswer, AiError>
 }
 
 /** Chat model behind the AI layer (AI SDK, OpenAI-compatible provider). */
@@ -61,26 +83,31 @@ export class LanguageModel extends Context.Service<LanguageModel, LanguageModelS
         baseURL: config.baseUrl,
         ...(config.apiKey === undefined ? {} : { apiKey: Redacted.value(config.apiKey) }),
         supportsStructuredOutputs: config.structuredOutputs,
-        includeUsage: true
+        includeUsage: true,
+        fetch: modelFetch
       })
       return yield* makeLanguageModel({ model: provider.chatModel(config.model), modelId: config.model, config })
     })
   )
 }
 
-const notConfigured = (config: AiConfigShape): LanguageModelShape => ({
-  modelId: undefined,
-  contextTokens: config.contextTokens,
-  maxOutputTokens: config.maxOutputTokens,
-  generateObject: () =>
-    Effect.fail(
-      new AiError({
-        kind: "not_configured",
-        message: "Modello IA non configurato (AI_MODEL)",
-        retryable: false
-      })
-    )
-})
+const notConfigured = (config: AiConfigShape): LanguageModelShape => {
+  const fail = Effect.fail(
+    new AiError({
+      kind: "not_configured",
+      message: "Modello IA non configurato (AI_MODEL)",
+      retryable: false
+    })
+  )
+  return {
+    modelId: undefined,
+    contextTokens: config.contextTokens,
+    maxOutputTokens: config.maxOutputTokens,
+    chatMaxOutputTokens: config.chatMaxOutputTokens,
+    generateObject: () => fail,
+    generateText: () => fail
+  }
+}
 
 /** Converts an Effect schema into the JSON Schema sent to the model. */
 export const toModelJsonSchema = (schema: Schema.Top): JSONSchema7 => {
@@ -129,6 +156,19 @@ const streamAnswer = async (options: Parameters<typeof streamText>[0]) => {
   return { text, usage, value: parseJson(text), truncated: finishReason === "length" }
 }
 
+/** Streams a text answer, handing every delta to `onDelta`. */
+const streamPlainText = async (options: Parameters<typeof streamText>[0], onDelta: (delta: string) => void) => {
+  let failure: { readonly error: unknown } | undefined
+  const result = streamText({ ...options, onError: () => undefined })
+  for await (const part of result.stream) {
+    if (part.type === "error") failure ??= { error: part.error }
+    else if (part.type === "text-delta" && part.text !== "") onDelta(part.text)
+  }
+  if (failure !== undefined) throw failure.error
+  const [text, usage, finishReason] = await Promise.all([result.text, result.usage, result.finishReason])
+  return { text, usage, truncated: finishReason === "length" }
+}
+
 /** Parses the model's JSON, tolerating a Markdown code fence around it. */
 const parseJson = (text: string): unknown => {
   const trimmed = text.trim()
@@ -166,42 +206,34 @@ export const makeLanguageModel = Effect.fnUntraced(function* (options: {
   const recorder = yield* ModelCallRecorder
   const semaphore = yield* Semaphore.make(Math.max(1, config.concurrency))
 
-  /** One HTTP call, recorded in the call log whatever its outcome. */
-  const call = <S extends OutputSchema>(
-    request: StructuredRequest<S>,
-    messages: Array<ModelMessage>,
-    attempt: number
+  type Usage = { readonly inputTokens: number | undefined; readonly outputTokens: number | undefined }
+
+  /**
+   * One HTTP call, recorded in the call log whatever its outcome, under the
+   * concurrency limit, with retries of transient errors (unless `retryable`
+   * says the call must not be repeated, e.g. part of a chat answer was shown).
+   */
+  const runCall = <A extends { readonly usage: Usage | undefined }>(
+    meta: { readonly prompt: PromptRef; readonly context: ModelCallContext; readonly attempt: number },
+    run: (signal: AbortSignal) => Promise<A>,
+    describe: (value: A) => { readonly outcome: ModelCallOutcome; readonly error: string | null },
+    retryable: () => boolean = () => true
   ) =>
     Effect.gen(function* () {
       const startedAt = Date.now()
-      const exit = yield* Effect.tryPromise({
-        try: (signal) =>
-          streamAnswer({
-            model,
-            instructions: request.instructions,
-            messages,
-            output: Output.object({ schema: jsonSchema(toModelJsonSchema(request.schema)) }),
-            maxOutputTokens: request.maxOutputTokens ?? config.maxOutputTokens,
-            temperature: config.temperature,
-            // Retries are handled below, with the call log and the concurrency limit.
-            maxRetries: 0,
-            abortSignal: signal
-          }),
-        catch: (error) => error
-      }).pipe(Effect.timeout(config.timeout), Effect.exit)
+      const exit = yield* Effect.tryPromise({ try: run, catch: (error) => error }).pipe(
+        Effect.timeout(config.timeout),
+        Effect.exit
+      )
 
-      const record = (
-        outcome: ModelCallOutcome,
-        usage: { readonly inputTokens: number | undefined; readonly outputTokens: number | undefined } | undefined,
-        error: string | null
-      ) =>
+      const record = (outcome: ModelCallOutcome, usage: Usage | undefined, error: string | null) =>
         recorder.record({
-          ...request.context,
-          task: request.prompt.id,
-          promptVersion: request.prompt.version,
+          ...meta.context,
+          task: meta.prompt.id,
+          promptVersion: meta.prompt.version,
           provider: config.providerName,
           model: modelId,
-          attempt,
+          attempt: meta.attempt,
           outcome,
           durationMs: Date.now() - startedAt,
           inputTokens: usage?.inputTokens ?? null,
@@ -210,13 +242,9 @@ export const makeLanguageModel = Effect.fnUntraced(function* (options: {
         })
 
       if (Exit.isSuccess(exit)) {
-        const answer = exit.value
-        yield* record(
-          answer.value === undefined ? "invalid_output" : "success",
-          answer.usage,
-          answer.truncated ? "Truncated at the output token limit" : null
-        )
-        return { text: answer.text, value: answer.value, truncated: answer.truncated } satisfies RawAnswer
+        const { outcome, error } = describe(exit.value)
+        yield* record(outcome, exit.value.usage, error)
+        return exit.value
       }
       const failure = Cause.findErrorOption(exit.cause)
       // No typed failure: only defects or interruption, propagated as they are.
@@ -224,14 +252,18 @@ export const makeLanguageModel = Effect.fnUntraced(function* (options: {
       const error = failure.value
       if (Cause.isTimeoutError(error)) {
         yield* record("timeout", undefined, "Timeout")
-        return yield* new AiError({ kind: "timeout", message: "Il modello non ha risposto in tempo", retryable: true })
+        return yield* new AiError({
+          kind: "timeout",
+          message: "Il modello non ha risposto in tempo",
+          retryable: retryable()
+        })
       }
       yield* record("error", undefined, describeError(error))
       return yield* new AiError({
         kind: "provider",
         message: `Errore del modello (${describeError(error)})`,
         // Bad requests (4xx other than 408/429) cannot be fixed by retrying.
-        retryable: APICallError.isInstance(error) ? error.isRetryable : true
+        retryable: (APICallError.isInstance(error) ? error.isRetryable : true) && retryable()
       })
     }).pipe(
       semaphore.withPermits(1),
@@ -240,6 +272,65 @@ export const makeLanguageModel = Effect.fnUntraced(function* (options: {
         times: config.maxRetries,
         while: (error) => error.retryable
       })
+    )
+
+  /** One structured call: the raw answer, parsed but not validated yet. */
+  const call = <S extends OutputSchema>(
+    request: StructuredRequest<S>,
+    messages: Array<ModelMessage>,
+    attempt: number
+  ): Effect.Effect<RawAnswer, AiError> =>
+    runCall(
+      { prompt: request.prompt, context: request.context, attempt },
+      (signal) =>
+        streamAnswer({
+          model,
+          instructions: request.instructions,
+          messages,
+          output: Output.object({ schema: jsonSchema(toModelJsonSchema(request.schema)) }),
+          maxOutputTokens: request.maxOutputTokens ?? config.maxOutputTokens,
+          temperature: config.temperature,
+          // Retries are handled by runCall, with the call log and the concurrency limit.
+          maxRetries: 0,
+          abortSignal: signal
+        }),
+      (answer) => ({
+        outcome: answer.value === undefined ? "invalid_output" : "success",
+        error: answer.truncated ? "Truncated at the output token limit" : null
+      })
+    ).pipe(Effect.map((answer) => ({ text: answer.text, value: answer.value, truncated: answer.truncated })))
+
+  const generateText = (request: TextRequest) =>
+    Effect.suspend(() => {
+      let delivered = false
+      const onDelta = (delta: string) => {
+        delivered = true
+        request.onDelta?.(delta)
+      }
+      return runCall(
+        { prompt: request.prompt, context: request.context, attempt: 1 },
+        (signal) =>
+          streamPlainText(
+            {
+              model,
+              instructions: request.instructions,
+              messages: request.messages.map((message) => ({ role: message.role, content: message.content })),
+              maxOutputTokens: request.maxOutputTokens ?? config.chatMaxOutputTokens,
+              temperature: config.temperature,
+              maxRetries: 0,
+              abortSignal: signal
+            },
+            onDelta
+          ),
+        (answer) => ({
+          outcome: "success",
+          error: answer.truncated ? "Truncated at the output token limit" : null
+        }),
+        () => !delivered
+      )
+    }).pipe(
+      Effect.map((answer): TextAnswer => ({ text: answer.text, truncated: answer.truncated })),
+      Effect.withSpan("ai.generateText", { attributes: { task: request.prompt.id, model: modelId } })
     )
 
   const generateObject = <S extends OutputSchema>(request: StructuredRequest<S>) =>
@@ -305,6 +396,8 @@ export const makeLanguageModel = Effect.fnUntraced(function* (options: {
     modelId,
     contextTokens: config.contextTokens,
     maxOutputTokens: config.maxOutputTokens,
-    generateObject
+    chatMaxOutputTokens: config.chatMaxOutputTokens,
+    generateObject,
+    generateText
   })
 })

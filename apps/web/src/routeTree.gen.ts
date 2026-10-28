@@ -12,11 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiUploadsRouteImport } from './routes/api/uploads'
 import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/index'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
 import { Route as AppProjectsNewRouteImport } from './routes/_app/projects/new'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as AppProjectsProjectIdChatRouteImport } from './routes/_app/projects/$projectId_.chat'
+import { Route as AppProjectsProjectIdTestsRouteImport } from './routes/_app/projects/$projectId_.tests'
 import { Route as ApiJobsJobIdEventsRouteImport } from './routes/api/jobs/$jobId/events'
 import { Route as AppProjectsProjectIdCardsFeatureIdRouteImport } from './routes/_app/projects/$projectId_.cards.$featureId'
 
@@ -33,6 +36,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const ApiChatRoute = ApiChatRouteImport.update({
+  id: '/api/chat',
+  path: '/api/chat',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiUploadsRoute = ApiUploadsRouteImport.update({
   id: '/api/uploads',
@@ -59,6 +67,18 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppProjectsProjectIdChatRoute =
+  AppProjectsProjectIdChatRouteImport.update({
+    id: '/projects/$projectId_/chat',
+    path: '/projects/$projectId/chat',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppProjectsProjectIdTestsRoute =
+  AppProjectsProjectIdTestsRouteImport.update({
+    id: '/projects/$projectId_/tests',
+    path: '/projects/$projectId/tests',
+    getParentRoute: () => AppRoute,
+  } as any)
 const ApiJobsJobIdEventsRoute = ApiJobsJobIdEventsRouteImport.update({
   id: '/api/jobs/$jobId/events',
   path: '/api/jobs/$jobId/events',
@@ -74,22 +94,28 @@ const AppProjectsProjectIdCardsFeatureIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/api/chat': typeof ApiChatRoute
   '/api/uploads': typeof ApiUploadsRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRoute
   '/projects/new': typeof AppProjectsNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/projects/': typeof AppProjectsIndexRoute
+  '/projects/$projectId/chat': typeof AppProjectsProjectIdChatRoute
+  '/projects/$projectId/tests': typeof AppProjectsProjectIdTestsRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
   '/projects/$projectId/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/api/chat': typeof ApiChatRoute
   '/api/uploads': typeof ApiUploadsRoute
   '/': typeof AppIndexRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRoute
   '/projects/new': typeof AppProjectsNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/projects': typeof AppProjectsIndexRoute
+  '/projects/$projectId/chat': typeof AppProjectsProjectIdChatRoute
+  '/projects/$projectId/tests': typeof AppProjectsProjectIdTestsRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
   '/projects/$projectId/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
@@ -97,12 +123,15 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/api/chat': typeof ApiChatRoute
   '/api/uploads': typeof ApiUploadsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRoute
   '/_app/projects/new': typeof AppProjectsNewRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/_app/projects/': typeof AppProjectsIndexRoute
+  '/_app/projects/$projectId_/chat': typeof AppProjectsProjectIdChatRoute
+  '/_app/projects/$projectId_/tests': typeof AppProjectsProjectIdTestsRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
   '/_app/projects/$projectId_/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
@@ -111,34 +140,43 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/api/chat'
     | '/api/uploads'
     | '/projects/$projectId'
     | '/projects/new'
     | '/api/auth/$'
     | '/projects/'
+    | '/projects/$projectId/chat'
+    | '/projects/$projectId/tests'
     | '/api/jobs/$jobId/events'
     | '/projects/$projectId/cards/$featureId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/api/chat'
     | '/api/uploads'
     | '/'
     | '/projects/$projectId'
     | '/projects/new'
     | '/api/auth/$'
     | '/projects'
+    | '/projects/$projectId/chat'
+    | '/projects/$projectId/tests'
     | '/api/jobs/$jobId/events'
     | '/projects/$projectId/cards/$featureId'
   id:
     | '__root__'
     | '/_app'
     | '/login'
+    | '/api/chat'
     | '/api/uploads'
     | '/_app/'
     | '/_app/projects/$projectId'
     | '/_app/projects/new'
     | '/api/auth/$'
     | '/_app/projects/'
+    | '/_app/projects/$projectId_/chat'
+    | '/_app/projects/$projectId_/tests'
     | '/api/jobs/$jobId/events'
     | '/_app/projects/$projectId_/cards/$featureId'
   fileRoutesById: FileRoutesById
@@ -146,6 +184,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  ApiChatRoute: typeof ApiChatRoute
   ApiUploadsRoute: typeof ApiUploadsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiJobsJobIdEventsRoute: typeof ApiJobsJobIdEventsRoute
@@ -173,6 +212,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/api/chat': {
+      id: '/api/chat'
+      path: '/api/chat'
+      fullPath: '/api/chat'
+      preLoaderRoute: typeof ApiChatRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/uploads': {
       id: '/api/uploads'
@@ -209,6 +255,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/projects/$projectId_/chat': {
+      id: '/_app/projects/$projectId_/chat'
+      path: '/projects/$projectId/chat'
+      fullPath: '/projects/$projectId/chat'
+      preLoaderRoute: typeof AppProjectsProjectIdChatRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/$projectId_/tests': {
+      id: '/_app/projects/$projectId_/tests'
+      path: '/projects/$projectId/tests'
+      fullPath: '/projects/$projectId/tests'
+      preLoaderRoute: typeof AppProjectsProjectIdTestsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/jobs/$jobId/events': {
       id: '/api/jobs/$jobId/events'
       path: '/api/jobs/$jobId/events'
@@ -231,6 +291,8 @@ interface AppRouteChildren {
   AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRoute
   AppProjectsNewRoute: typeof AppProjectsNewRoute
   AppProjectsIndexRoute: typeof AppProjectsIndexRoute
+  AppProjectsProjectIdChatRoute: typeof AppProjectsProjectIdChatRoute
+  AppProjectsProjectIdTestsRoute: typeof AppProjectsProjectIdTestsRoute
   AppProjectsProjectIdCardsFeatureIdRoute: typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 
@@ -239,6 +301,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppProjectsProjectIdRoute: AppProjectsProjectIdRoute,
   AppProjectsNewRoute: AppProjectsNewRoute,
   AppProjectsIndexRoute: AppProjectsIndexRoute,
+  AppProjectsProjectIdChatRoute: AppProjectsProjectIdChatRoute,
+  AppProjectsProjectIdTestsRoute: AppProjectsProjectIdTestsRoute,
   AppProjectsProjectIdCardsFeatureIdRoute:
     AppProjectsProjectIdCardsFeatureIdRoute,
 }
@@ -248,6 +312,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  ApiChatRoute: ApiChatRoute,
   ApiUploadsRoute: ApiUploadsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiJobsJobIdEventsRoute: ApiJobsJobIdEventsRoute,

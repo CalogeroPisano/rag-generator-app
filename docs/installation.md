@@ -54,23 +54,55 @@ To scale processing, start more workers: `docker compose up -d --scale worker=3`
 
 ## AI model
 
-The AI understanding ("Genera schede") calls a chat model through an OpenAI-compatible API: the bundled Ollama, an
-Ollama on the host, vLLM or any compatible server. The model must support JSON-schema constrained output
-(`response_format`), as Ollama and vLLM do; otherwise set `AI_STRUCTURED_OUTPUTS=false`.
+The AI understanding ("Genera schede"), the test questions and the RAG chat call a chat model through an
+OpenAI-compatible API: the bundled Ollama, an Ollama on the host, vLLM or any compatible server. The model must
+support JSON-schema constrained output (`response_format`), as Ollama and vLLM do; otherwise set
+`AI_STRUCTURED_OUTPUTS=false`. The chat runs in the **web** service, everything else in the worker: both receive the
+`AI_*` and `EMBEDDING_*` variables.
 
-| Variable                | Default (worker)         | Description                                                                 |
-| ----------------------- | ------------------------ | --------------------------------------------------------------------------- |
-| `AI_MODEL`              | —                        | Model id; without it the understanding is disabled                          |
-| `AI_BASE_URL`           | `http://ollama:11434/v1` | Endpoint (`http://host.docker.internal:11434/v1` for an Ollama on the host) |
-| `AI_PROVIDER_NAME`      | `ollama`                 | Name recorded in the call log                                               |
-| `AI_API_KEY`            | —                        | Bearer key, if the endpoint requires one                                    |
-| `AI_STRUCTURED_OUTPUTS` | `true`                   | Send the JSON schema as `response_format`                                   |
-| `AI_TIMEOUT`            | `5 minutes`              | Timeout of one call                                                         |
-| `AI_MAX_RETRIES`        | `2`                      | Retries on transient errors (network, 408/429/5xx, timeout)                 |
-| `AI_CONCURRENCY`        | `2`                      | Parallel calls per worker                                                   |
-| `AI_CONTEXT_TOKENS`     | `16384`                  | Context window: prompts are sized to fit it                                 |
-| `AI_MAX_OUTPUT_TOKENS`  | `4096`                   | Maximum answer length                                                       |
-| `AI_TEMPERATURE`        | `0.1`                    | Sampling temperature                                                        |
+| Variable                    | Default                  | Description                                                                 |
+| --------------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| `AI_MODEL`                  | —                        | Model id; without it the understanding and the chat are disabled            |
+| `AI_BASE_URL`               | `http://ollama:11434/v1` | Endpoint (`http://host.docker.internal:11434/v1` for an Ollama on the host) |
+| `AI_PROVIDER_NAME`          | `ollama`                 | Name recorded in the call log                                               |
+| `AI_API_KEY`                | —                        | Bearer key, if the endpoint requires one                                    |
+| `AI_STRUCTURED_OUTPUTS`     | `true`                   | Send the JSON schema as `response_format`                                   |
+| `AI_TIMEOUT`                | `5 minutes`              | Timeout of one call                                                         |
+| `AI_MAX_RETRIES`            | `2`                      | Retries on transient errors (network, 408/429/5xx, timeout)                 |
+| `AI_CONCURRENCY`            | `2`                      | Parallel calls per process (worker, web)                                    |
+| `AI_CONTEXT_TOKENS`         | `16384`                  | Context window: prompts are sized to fit it                                 |
+| `AI_MAX_OUTPUT_TOKENS`      | `4096`                   | Maximum answer length (structured answers)                                  |
+| `AI_CHAT_MAX_OUTPUT_TOKENS` | `1024`                   | Maximum length of a chat answer                                             |
+| `AI_TEMPERATURE`            | `0.1`                    | Sampling temperature                                                        |
+
+There is no limit on how long the model takes to send its first token other than `AI_TIMEOUT`: model calls do not use
+Node's built-in `fetch`, which gives up after 5 minutes without response headers.
+
+### Embeddings and chat
+
+The chat searches the cards through embeddings stored in pgvector, computed by an embedding model behind an
+OpenAI-compatible `/v1/embeddings` endpoint. Cards are in English and questions are usually in Italian: use a
+**multilingual** model. The default suggestion is `bge-m3` (MIT, 1024 dimensions, available in Ollama). Any dimension
+works; changing model re-indexes the cards (vectors of different models are never compared).
+
+| Variable                  | Default       | Description                                                          |
+| ------------------------- | ------------- | -------------------------------------------------------------------- |
+| `EMBEDDING_MODEL`         | —             | Embedding model id; without it there is no index and no chat         |
+| `EMBEDDING_BASE_URL`      | `AI_BASE_URL` | Embedding endpoint, if different from the chat one                   |
+| `EMBEDDING_API_KEY`       | `AI_API_KEY`  | Bearer key of the embedding endpoint                                 |
+| `EMBEDDING_BATCH_SIZE`    | `16`          | Texts per embedding request                                          |
+| `RAG_TOP_CARDS`           | `5`           | Cards given to the chat model per question (fewer if they don't fit) |
+| `RAG_CANDIDATES`          | `40`          | Chunks per search (vector, full-text) before the fusion              |
+| `TEST_QUESTIONS_LANGUAGE` | `Italian`     | Language of the generated test questions                             |
+| `TEST_QUESTIONS_PER_CARD` | `3`           | Questions generated per card                                         |
+
+```bash
+docker compose exec ollama ollama pull bge-m3
+# .env: EMBEDDING_MODEL=bge-m3, then: docker compose up -d
+```
+
+After changing the embedding model's behaviour without changing its id (e.g. a different quantization), use
+"Ricostruisci" in the index box of the project (Funzionalità tab).
 
 With the bundled Ollama:
 
@@ -81,7 +113,9 @@ docker compose exec ollama ollama pull qwen3:4b-instruct   # or a larger model i
 ```
 
 Indicative speed on CPU only (4 threads, `qwen3:4b-instruct`): about 1.5 output tokens per second with long prompts;
-a card can take 20–30 minutes, so raise `AI_TIMEOUT` accordingly. With a GPU the same calls take seconds.
+a card can take 20–30 minutes, so raise `AI_TIMEOUT` accordingly; a chat answer takes several minutes. With a GPU the
+same calls take seconds. Chat answers and worker jobs share the model: on CPU a running understanding slows the chat
+down.
 
 Ollama's context window defaults to a few thousand tokens: the compose file sets `OLLAMA_CONTEXT_LENGTH` to
 `AI_CONTEXT_TOKENS`. For an Ollama outside compose, set the same variable there (or create a model with
@@ -93,13 +127,15 @@ protected by the host firewall).
 
 ## Reverse proxy
 
-An HTTPS proxy (nginx, Traefik…) can sit in front of `web`. For the progress stream (SSE) the proxy must not buffer
-the responses of `/api/jobs/*/events` (the application already sends `X-Accel-Buffering: no`). The proxy's request
+An HTTPS proxy (nginx, Traefik…) can sit in front of `web`. For the progress and chat streams (SSE) the proxy must
+not buffer the responses of `/api/jobs/*/events` and `/api/chat` (the application already sends
+`X-Accel-Buffering: no`), and its read timeout must cover a whole chat answer (minutes on CPU). The proxy's request
 body limit must be at least `ACQUISITION_MAX_ARCHIVE_MB`.
 
 ## Backups
 
-The database is enough: it holds projects, masked contents, jobs and users.
+The database is enough: it holds projects, masked contents, jobs, users, the knowledge base with its index and the
+chat conversations.
 
 ```bash
 docker compose exec postgres pg_dump -U code_to_rag -Fc code_to_rag > backup.dump

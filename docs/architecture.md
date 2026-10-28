@@ -17,23 +17,25 @@ flowchart LR
   end
   git["Git server<br/>(internal or public)"]
 
-  browser -- "HTTP: pages, server functions,<br/>upload, SSE" --> web
+  browser -- "HTTP: pages, server functions,<br/>upload, SSE (progress, chat)" --> web
   web -- "SQL, LISTEN" --> pg
   worker -- "SQL, NOTIFY" --> pg
   migrate -- "migrations" --> pg
   web -- "writes uploaded zips" --> data
   worker -- "reads zips, extracts, clones" --> data
   worker -- "HTTPS clone" --> git
-  worker -- "chat completions<br/>(masked code only)" --> ollama
+  worker -- "chat completions, embeddings<br/>(masked code only)" --> ollama
+  web -- "chat answer, question embedding<br/>(cards only)" --> ollama
 ```
 
 - **web** serves the interface, exposes the server functions (typed RPCs used by the pages) and a few server
-  routes: zip upload, SSE progress stream, authentication endpoints. It never runs long tasks.
+  routes: zip upload, SSE progress stream, RAG chat stream, authentication endpoints. It never runs long tasks; the
+  only model calls it makes are those of the chat (embedding of the question, streamed answer).
 - **worker** takes jobs from the queue in PostgreSQL and runs the pipeline phases. Several instances can run at once.
 - **migrate** applies the database migrations when the stack starts, then exits; web and worker start only after it.
 - **PostgreSQL** is the only persistent store: application data, file contents (already masked), job queue, events,
-  sessions (schema `public`) and the knowledge produced by the AI understanding (schema `rag`, see
-  [Data model](data-model.md#the-rag-schema)).
+  sessions, chat conversations (schema `public`) and the knowledge produced by the AI understanding, its embedding
+  index (pgvector) and the test questions (schema `rag`, see [Data model](data-model.md#the-rag-schema)).
 - The **/data** volume is shared by web and worker: it holds uploaded zips waiting to be processed and the temporary
   work areas of the jobs. It is emptied at the end of every acquisition.
 
@@ -60,19 +62,21 @@ flowchart BT
   worker --> core
 ```
 
-| Package             | Responsibility                                                                                                                                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/analysis` | Acquisition primitives with no application state: safe zip reading, Git clone, file classification, language detection, credential masking, tree scanning; tree-sitter parsing (symbols, imports) and import resolution.                               |
-| `packages/core`     | Domain: Effect schemas (entities, inputs), typed errors, configuration, secret encryption, repository **ports**, pipeline engine, acquisition and analysis pipelines, use cases.                                                                       |
-| `packages/db`       | Implementation of the ports with Drizzle and `pg`, schema and migrations, `LISTEN/NOTIFY` listener, test support.                                                                                                                                      |
-| `packages/ai`       | AI layer: `LanguageModel` service over the AI SDK (OpenAI-compatible provider) with retry, timeout, concurrency limit, schema validation and one correction request; `AiConfig`; `ModelCallRecorder` port; versioned prompts and their output schemas. |
-| `apps/web`          | Interface and HTTP API.                                                                                                                                                                                                                                |
-| `apps/worker`       | Job process and migration command.                                                                                                                                                                                                                     |
+| Package             | Responsibility                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/analysis` | Acquisition primitives with no application state: safe zip reading, Git clone, file classification, language detection, credential masking, tree scanning; tree-sitter parsing (symbols, imports) and import resolution.                                                                                                        |
+| `packages/core`     | Domain: Effect schemas (entities, inputs), typed errors, configuration, secret encryption, repository **ports**, pipeline engine, acquisition, analysis, understanding, indexing and test pipelines, RAG retrieval and chat, use cases.                                                                                         |
+| `packages/db`       | Implementation of the ports with Drizzle and `pg`, schema and migrations, `LISTEN/NOTIFY` listener, test support.                                                                                                                                                                                                               |
+| `packages/ai`       | AI layer: `LanguageModel` (structured answers with schema validation and one correction request, streamed text answers) and `EmbeddingModel` services over the AI SDK (OpenAI-compatible provider) with retry, timeout and concurrency limit; `AiConfig`; `ModelCallRecorder` port; versioned prompts and their output schemas. |
+| `apps/web`          | Interface and HTTP API.                                                                                                                                                                                                                                                                                                         |
+| `apps/worker`       | Job process and migration command.                                                                                                                                                                                                                                                                                              |
 
 ### Ports and adapters
 
 `core` does not know the database: it defines the repository interfaces (`ProjectRepository`, `SnapshotRepository`,
-`JobRepository`, `AnalysisRepository`, `UnderstandingRepository`, `KnowledgeRepository` in `packages/core/src/ports.ts`; `ModelCallRecorder` in `packages/ai`) as Effect services. `db` implements them as `Layer`s. The
+`JobRepository`, `AnalysisRepository`, `UnderstandingRepository`, `KnowledgeRepository`, `IndexRepository`,
+`EvaluationRepository`, `ChatRepository` in `packages/core/src/ports.ts`; `ModelCallRecorder` in `packages/ai`) as Effect
+services. `db` implements them as `Layer`s. The
 applications compose the layers at startup. The domain and the pipeline therefore stay testable and independent of
 the persistence technology, and the dependency always goes from `db` to `core`, never the other way round.
 
@@ -89,14 +93,15 @@ the persistence technology, and the dependency always goes from `db` to `core`, 
 | Authentication  | Better Auth (email and password), sharing the database pool                                       |
 | Acquisition     | fflate (decompression), isomorphic-git (clone, no git binary in the images)                       |
 | Static analysis | web-tree-sitter (WebAssembly) with the official grammars of each language, no native modules      |
-| AI              | Vercel AI SDK 7 (`ai`) + `@ai-sdk/openai-compatible`; no Vercel AI Gateway                        |
+| AI              | Vercel AI SDK 7 (`ai`) + `@ai-sdk/openai-compatible`; no Vercel AI Gateway; undici for model HTTP |
+| RAG             | pgvector (exact cosine search) + PostgreSQL full-text search, fused with Reciprocal Rank Fusion   |
 | Tests           | Vitest (unit, and integration on a real PostgreSQL)                                               |
 | Distribution    | Multi-stage Docker: images with JavaScript bundles only, no `node_modules`                        |
 
 ### Running effects
 
 - **Web**: a single `ManagedRuntime` (`apps/web/src/server/runtime.server.ts`), built once per process with
-  configuration, encryption, database, repositories and the event listener. Server functions run Effect programs
+  configuration, encryption, database, repositories, the event listener and the chat and embedding models. Server functions run Effect programs
   through `runEffect`, which turns expected errors into HTTP responses (404, 400, 413) and logs the others without
   exposing them to the client.
 - **Worker**: the main program runs in a fiber; `SIGTERM`/`SIGINT` interrupt it and running jobs are returned to the
@@ -126,6 +131,12 @@ the persistence technology, and the dependency always goes from `db` to `core`, 
 | Corrections tied to the feature name                      | Product owner's choice: they survive regenerations and new feature maps; unmatched ones stay visible as orphans.             |
 | Project deletion refused while a job runs                 | Avoids a worker writing to a deleted project; queued jobs are deleted with it.                                               |
 | Interface in Italian; code, docs and logs in English      | Italian end users; code, documentation and logs are for developers and operators.                                            |
+| Index of all cards but the excluded ones                  | Product owner's choice: the chat is usable during the review; each source shows its review state; "approved only" filter.    |
+| Chat in the web process, streamed (SSE)                   | Product owner's choice: answers appear while they are written; conversations are stored per user.                            |
+| Multilingual embeddings + hybrid search                   | Product owner's choice: cards are in English, questions may be in Italian; full-text finds exact names, codes and messages.  |
+| Exact vector search, no ANN index                         | A project has hundreds to a few thousand chunks: a filtered sequential scan is fast and exact, and any dimension works.      |
+| Test questions generated and manual, judged by the model  | Product owner's choice: retrieval measured (hit, rank, MRR), answers judged against the expected card.                       |
+| undici `fetch` for model calls                            | Node's fetch gives up after 5 minutes without response headers; models on CPU can take longer to start answering.            |
 
 ## Ready for durable workflows
 

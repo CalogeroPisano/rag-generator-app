@@ -8,6 +8,18 @@ import { Context, type Effect, type Option } from "effect"
 import type {
   AnalysisStatus,
   CardStatus,
+  ChatConversation,
+  ChatConversationView,
+  ChatMessage,
+  ChatMessageStatus,
+  ChatSource,
+  IndexStatus,
+  TestQuestion,
+  TestQuestionOrigin,
+  TestResult,
+  TestRun,
+  TestRunStatus,
+  TestRunView,
   CardVerification,
   CardView,
   Correction,
@@ -119,6 +131,11 @@ export class JobRepository extends Context.Service<
       readonly payload?: unknown
       /** Jobs of the same type are deduplicated per snapshot and key (e.g. one active job per card). */
       readonly dedupeKey?: string | undefined
+      /**
+       * Which existing job absorbs the request: a queued or running one (default), or only a queued one, for jobs
+       * that must see changes made while a previous run is in progress (indexing).
+       */
+      readonly dedupe?: "active" | "queued" | undefined
     }): Effect.Effect<Job, DatabaseError>
     /** Queued and running jobs of a project. */
     active(projectId: ProjectId): Effect.Effect<ReadonlyArray<Job>, DatabaseError>
@@ -397,3 +414,168 @@ export class KnowledgeRepository extends Context.Service<
     reattachCorrections(id: SnapshotId, projectId: ProjectId): Effect.Effect<void, DatabaseError>
   }
 >()("code-to-rag/core/KnowledgeRepository") {}
+
+// ── RAG: index, chat, test questions (phase 5) ──────────────────────────────
+
+/** A card whose chunks are missing or outdated. */
+export interface CardToIndex {
+  readonly cardId: string
+  readonly version: number
+  readonly featureName: string
+  readonly content: CardContent
+}
+
+export interface NewChunk {
+  /** `overview` or a card section. */
+  readonly section: string
+  readonly text: string
+  readonly embedding: ReadonlyArray<number>
+}
+
+/** A chunk found by one of the searches, best first. */
+export interface ChunkHit {
+  readonly cardId: string
+  readonly section: string
+}
+
+export interface ChunkSearch {
+  readonly embedding: ReadonlyArray<number>
+  readonly model: string
+  /** Words of the question for the full-text search (any of them). */
+  readonly terms: ReadonlyArray<string>
+  /** Candidates per search. */
+  readonly limit: number
+  readonly approvedOnly: boolean
+}
+
+/** A card given to the chat model. */
+export interface ContextCard extends ChatSource {
+  readonly content: CardContent
+}
+
+export interface IndexMeta {
+  readonly model: string
+  /** Version of the chunk text format (`CARD_CHUNK`). */
+  readonly formatVersion: number
+}
+
+/** Embedding index of the cards (`rag.chunk`). */
+export class IndexRepository extends Context.Service<
+  IndexRepository,
+  {
+    /** Non-excluded cards with no chunks for their current version, model and format. */
+    cardsToIndex(id: SnapshotId, meta: IndexMeta): Effect.Effect<ReadonlyArray<CardToIndex>, DatabaseError>
+    /** Replaces the chunks of a card; ignored when the card changed version (or disappeared) meanwhile. */
+    saveChunks(
+      id: SnapshotId,
+      card: { readonly cardId: string; readonly version: number },
+      chunks: ReadonlyArray<NewChunk>,
+      meta: IndexMeta
+    ): Effect.Effect<void, DatabaseError>
+    /** Deletes every chunk of the snapshot (full rebuild). */
+    clear(id: SnapshotId): Effect.Effect<void, DatabaseError>
+    status(id: SnapshotId, meta: IndexMeta | undefined): Effect.Effect<IndexStatus, DatabaseError>
+    /**
+     * Vector and full-text candidates among the chunks of current, non-excluded (or approved) card versions
+     * indexed with `model`.
+     */
+    search(
+      id: SnapshotId,
+      query: ChunkSearch
+    ): Effect.Effect<
+      { readonly vector: ReadonlyArray<ChunkHit>; readonly text: ReadonlyArray<ChunkHit> },
+      DatabaseError
+    >
+    /** Cards by id, in the requested order (missing ones are left out). */
+    cards(id: SnapshotId, cardIds: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<ContextCard>, DatabaseError>
+  }
+>()("code-to-rag/core/IndexRepository") {}
+
+export interface NewTestQuestion {
+  readonly featureId: string
+  readonly featureName: string
+  readonly question: string
+  readonly expectedAnswer: string | null
+  readonly origin: TestQuestionOrigin
+  readonly authorName: string | null
+  readonly provenance: Provenance | null
+}
+
+export interface NewTestRun {
+  readonly id: string
+  readonly snapshotId: SnapshotId
+  readonly model: string
+  readonly embeddingModel: string
+  readonly topK: number
+  readonly approvedOnly: boolean
+  readonly questions: number
+}
+
+export interface TestRunTotals {
+  readonly retrievalHits: number
+  readonly firstHits: number
+  readonly mrr: number
+  readonly correct: number
+  readonly partial: number
+  readonly incorrect: number
+  readonly noAnswer: number
+  readonly unjudged: number
+}
+
+/** Test questions and runs (`rag` schema). */
+export class EvaluationRepository extends Context.Service<
+  EvaluationRepository,
+  {
+    /** Questions of the project, attached to the features of the snapshot or orphans, oldest first. */
+    questions(id: SnapshotId, projectId: ProjectId): Effect.Effect<ReadonlyArray<TestQuestion>, DatabaseError>
+    addQuestions(projectId: ProjectId, questions: ReadonlyArray<NewTestQuestion>): Effect.Effect<void, DatabaseError>
+    updateQuestion(
+      projectId: ProjectId,
+      questionId: string,
+      update: {
+        readonly featureId: string
+        readonly featureName: string
+        readonly question: string
+        readonly expectedAnswer: string | null
+      }
+    ): Effect.Effect<void, NotFoundError | DatabaseError>
+    deleteQuestion(projectId: ProjectId, questionId: string): Effect.Effect<void, NotFoundError | DatabaseError>
+    /** After a new feature map: attaches the project's questions to the features with the same name. */
+    reattachQuestions(id: SnapshotId, projectId: ProjectId): Effect.Effect<void, DatabaseError>
+    /** Creates the run, or resets it (results deleted) when the job runs again. */
+    startRun(run: NewTestRun): Effect.Effect<void, DatabaseError>
+    getRun(runId: string): Effect.Effect<TestRunView, NotFoundError | DatabaseError>
+    saveResult(runId: string, result: TestResult): Effect.Effect<void, DatabaseError>
+    finishRun(runId: string, status: TestRunStatus, totals: TestRunTotals | null): Effect.Effect<void, DatabaseError>
+    runs(id: SnapshotId): Effect.Effect<ReadonlyArray<TestRun>, DatabaseError>
+  }
+>()("code-to-rag/core/EvaluationRepository") {}
+
+export interface NewChatMessage {
+  readonly role: "user" | "assistant"
+  readonly content: string
+  readonly status: ChatMessageStatus
+  readonly sources: ReadonlyArray<ChatSource>
+  readonly citations: ReadonlyArray<number>
+  readonly snapshotId: SnapshotId | null
+  readonly model: string | null
+}
+
+/** Chat conversations (application schema): private to the user who started them. */
+export class ChatRepository extends Context.Service<
+  ChatRepository,
+  {
+    conversations(projectId: ProjectId, userId: UserId): Effect.Effect<ReadonlyArray<ChatConversation>, DatabaseError>
+    createConversation(input: {
+      readonly projectId: ProjectId
+      readonly userId: UserId
+      readonly title: string
+    }): Effect.Effect<ChatConversation, DatabaseError>
+    getConversation(
+      conversationId: string,
+      userId: UserId
+    ): Effect.Effect<ChatConversationView, NotFoundError | DatabaseError>
+    addMessage(conversationId: string, message: NewChatMessage): Effect.Effect<ChatMessage, DatabaseError>
+    deleteConversation(conversationId: string, userId: UserId): Effect.Effect<void, NotFoundError | DatabaseError>
+  }
+>()("code-to-rag/core/ChatRepository") {}

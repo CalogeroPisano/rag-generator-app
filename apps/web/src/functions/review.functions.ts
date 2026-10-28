@@ -68,7 +68,7 @@ export const listCardJobs = createServerFn({ method: "GET" })
         Effect.map((jobs) =>
           jobs.flatMap((job) => {
             const payload = job.payload
-            return payload === null
+            return job.type !== "card" || payload === null || !("operation" in payload)
               ? []
               : [{ jobId: job.id, status: job.status, featureId: payload.featureId, operation: payload.operation }]
           })

@@ -1,4 +1,4 @@
-import { AiConfig } from "@code-to-rag/ai"
+import { AiConfig, EmbeddingModel, LanguageModel } from "@code-to-rag/ai"
 import { AppConfig, SecretBox } from "@code-to-rag/core"
 import { DatabaseLive, JobEventsListener } from "@code-to-rag/db"
 import { Config, Effect, Layer, Logger, ManagedRuntime } from "effect"
@@ -10,8 +10,11 @@ const LoggerLive = Layer.unwrap(
   })
 )
 
-// AiConfig only: the web never calls models, it tells the UI whether the worker can.
-const AppLive = Layer.mergeAll(AppConfig.layer, AiConfig.layer, SecretBox.layer, JobEventsListener.layer).pipe(
+// The web calls models for the RAG chat only (question embedding and streamed answer); every other model call
+// runs in the worker. The model call log (ModelCallRecorder) is written by the database layer.
+const AiLive = Layer.mergeAll(LanguageModel.layer, EmbeddingModel.layer).pipe(Layer.provideMerge(AiConfig.layer))
+
+const AppLive = Layer.mergeAll(AppConfig.layer, AiLive, SecretBox.layer, JobEventsListener.layer).pipe(
   Layer.provideMerge(DatabaseLive),
   Layer.provideMerge(LoggerLive)
 )

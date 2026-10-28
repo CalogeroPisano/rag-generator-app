@@ -2,9 +2,12 @@ import {
   acquisitionPipeline,
   analysisPipeline,
   cardPipeline,
+  evaluationPipeline,
+  indexingPipeline,
   type Job,
   JobRepository,
   type JobType,
+  questionsPipeline,
   removeStaleUploads,
   runJob,
   SnapshotRepository,
@@ -34,7 +37,10 @@ const pipelines = {
   acquisition: acquisitionPipeline,
   analysis: analysisPipeline,
   understanding: understandingPipeline,
-  card: cardPipeline
+  card: cardPipeline,
+  indexing: indexingPipeline,
+  questions: questionsPipeline,
+  evaluation: evaluationPipeline
 } as const satisfies Record<JobType, unknown>
 
 /** Runs one job while a background fiber keeps its heartbeat fresh. */
@@ -56,6 +62,12 @@ const processJob = Effect.fnUntraced(function* (job: Job, options: WorkerOptions
       return yield* runJob(pipelines.understanding, job)
     case "card":
       return yield* runJob(pipelines.card, job)
+    case "indexing":
+      return yield* runJob(pipelines.indexing, job)
+    case "questions":
+      return yield* runJob(pipelines.questions, job)
+    case "evaluation":
+      return yield* runJob(pipelines.evaluation, job)
   }
 }, Effect.scoped)
 

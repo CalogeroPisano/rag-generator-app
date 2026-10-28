@@ -1,4 +1,9 @@
-import { type OutputSchema, scriptedLanguageModel, type StructuredRequest } from "@code-to-rag/ai"
+import {
+  type OutputSchema,
+  scriptedEmbeddingModel,
+  scriptedLanguageModel,
+  type StructuredRequest
+} from "@code-to-rag/ai"
 import {
   acquisitionPipeline,
   analysisPipeline,
@@ -45,6 +50,8 @@ const makeLayer = (databaseUrl: string) =>
   Layer.mergeAll(
     SecretBox.layer,
     CodeAnalyzer.layer,
+    // Embeddings not configured: no indexing jobs in the queue of these tests.
+    scriptedEmbeddingModel({ configured: false }),
     scriptedLanguageModel((request) => {
       requests.push(request)
       return respond(request)

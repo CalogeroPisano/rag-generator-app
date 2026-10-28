@@ -7,9 +7,10 @@ a vector database that powers a RAG chatbot.
 
 Commercially distributable product, installed **on premise** with Docker Compose.
 
-> **Status:** phases 1–4 of 7 completed (source acquisition, static analysis, AI understanding, review). See [Roadmap](#roadmap).
+> **Status:** phases 1–5 of 7 completed (source acquisition, static analysis, AI understanding, review, RAG chat).
+> See [Roadmap](#roadmap).
 
-## Available features (phases 1–4)
+## Available features (phases 1–5)
 
 - **Acquisition** from a zip archive (streamed upload) or a Git repository, including private ones with a read-only
   token (stored encrypted).
@@ -33,7 +34,15 @@ Commercially distributable product, installed **on premise** with Docker Compose
   missing rules); side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
   reviewer describes the mistake, the model rewrites the card) and regeneration. Corrections are kept and re-applied
   at every regeneration.
-- **Project deletion**, with everything it produced (knowledge base included).
+- **Embedding index** in pgvector: every card that is not excluded is split into chunks (overview and sections) and
+  embedded with a multilingual model; the index follows regenerations, corrections and edits on its own.
+- **RAG chat with citations**: hybrid search (vectors + PostgreSQL full-text, fused by rank) over the cards, answers
+  streamed in the language of the question, citing the cards used (with their review state and a link to their
+  review page); optionally only approved cards. Conversations are kept per user.
+- **Test questions**: generated from the cards (with the expected answer) or written by reviewers, kept across
+  regenerations; test runs measure whether the right card is found (hit rate, first place, MRR) and let the model
+  judge each answer.
+- **Project deletion**, with everything it produced (knowledge base, index, tests and conversations included).
 - **Model call log**: phase, model, duration, tokens and outcome of every call, never the code.
 - **Web interface**: login, project list, new project, job progress, file tree with exclusions, code viewer
   (Monaco) with file outline, dependencies and AI summary, symbol search, dependency overview, features and cards with
@@ -54,7 +63,8 @@ Open http://localhost:3000: the first account created is the administrator. Furt
 `AUTH_ALLOW_SIGNUP=true`.
 
 AI understanding needs a model: set `AI_MODEL` (and `AI_BASE_URL` if the model is not served by the bundled Ollama).
-With the bundled Ollama: `docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull <model>`.
+The chat also needs an embedding model: `EMBEDDING_MODEL` (multilingual, e.g. `bge-m3`). With the bundled Ollama:
+`docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull <model>`.
 See [Installation](docs/installation.md#ai-model).
 
 ## Local development
@@ -94,14 +104,16 @@ packages/
   core/       domain (Effect): schemas, errors, configuration, ports, pipeline, use cases
   db/         Drizzle schema, migrations, repositories, LISTEN/NOTIFY listener
   analysis/   acquisition (zip, Git, filters, languages, credential masking) and tree-sitter parsing
-  ai/         AI layer: AI SDK client (retry, timeout, concurrency, validation), call log port, versioned prompts
+  ai/         AI layer: chat and embedding models over the AI SDK (retry, timeout, concurrency, validation),
+              call log port, versioned prompts
 docs/         architecture and flow documentation
 ```
 
 ## Documentation
 
 - [Architecture](docs/architecture.md): components, packages, technologies, decisions
-- [Flows](docs/flows.md): acquisition, static analysis, AI understanding, jobs and phases, progress, authentication
+- [Flows](docs/flows.md): acquisition, static analysis, AI understanding, review, index, chat, test questions, jobs
+  and phases, progress, authentication
 - [Data model](docs/data-model.md): application tables and the `rag` schema
 - [Security](docs/security.md): masking, extraction, tokens, web protections
 - [Installation and configuration](docs/installation.md): Docker Compose, environment variables, operations
@@ -113,7 +125,7 @@ docs/         architecture and flow documentation
 2. **Static analysis with tree-sitter**: symbols and dependencies between files — completed
 3. **AI understanding**: summaries, feature map, card generation with line references — completed
 4. **Automated verification and assisted review; project deletion** — completed
-5. Indexing in pgvector, RAG chat with citations, test questions
+5. **Indexing in pgvector, RAG chat with citations, test questions** — completed
 6. Incremental updates on new versions of the code
 7. Per-project knowledge export (archive + SQL) and import
 

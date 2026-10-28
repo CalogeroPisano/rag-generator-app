@@ -40,7 +40,8 @@ files. The license check reads this inventory like the others.
 
 `ai`, `@ai-sdk/openai-compatible` and their `@ai-sdk/*` dependencies (including `@ai-sdk/gateway`, which `ai`
 imports but the product never uses) and `@vercel/oidc` are Apache-2.0; `zod` (a peer dependency of the AI SDK) and
-`eventsource-parser` are MIT. Their LICENSE files ship in `third-party-licenses/`. Models are not distributed: the
+`eventsource-parser` are MIT. `undici` (MIT) provides the `fetch` used for model calls (no 5-minute headers timeout).
+Their LICENSE files ship in `third-party-licenses/`. Models are not distributed: the
 license of the model deployed on premise is the operator's responsibility.
 
 ## Build tools

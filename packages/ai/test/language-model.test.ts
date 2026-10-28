@@ -18,7 +18,9 @@ const config: AiConfigShape = {
   concurrency: 1,
   contextTokens: 8192,
   maxOutputTokens: 1024,
-  temperature: 0
+  chatMaxOutputTokens: 512,
+  temperature: 0,
+  embedding: { baseUrl: "http://localhost:11434/v1", model: "test-embedding", apiKey: undefined, batchSize: 2 }
 }
 
 /** A streamed answer (the AI layer always streams). */
@@ -172,6 +174,83 @@ describe("LanguageModel", () => {
     const { result, calls } = await run(model)
     expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "provider", retryable: false } })
     expect(calls).toHaveLength(1)
+  })
+})
+
+/** A text answer streamed in several deltas. */
+const textAnswer = (deltas: ReadonlyArray<string>, options: { readonly failAfter?: boolean } = {}) => ({
+  stream: simulateReadableStream({
+    chunks: [
+      { type: "text-start" as const, id: "1" },
+      ...deltas.map((delta) => ({ type: "text-delta" as const, id: "1", delta })),
+      ...(options.failAfter === true
+        ? [{ type: "error" as const, error: new Error("connection reset") }]
+        : [
+            { type: "text-end" as const, id: "1" },
+            {
+              type: "finish" as const,
+              finishReason: { unified: "stop" as const, raw: undefined },
+              usage: {
+                inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+                outputTokens: { total: 5, text: 5, reasoning: undefined }
+              }
+            }
+          ])
+    ]
+  })
+})
+
+const runText = async (model: MockLanguageModelV4) => {
+  const calls: Array<ModelCall> = []
+  const deltas: Array<string> = []
+  const recorder = Layer.succeed(
+    ModelCallRecorder,
+    ModelCallRecorder.of({ record: (call) => Effect.sync(() => void calls.push(call)) })
+  )
+  const layer = Layer.effect(
+    LanguageModel,
+    makeLanguageModel({ model, modelId: "test-model", config, retryBaseDelay: "1 millis" })
+  ).pipe(Layer.provide(recorder))
+  const result = await Effect.runPromise(
+    LanguageModel.use((service) =>
+      service.generateText({
+        prompt: { id: "chat-answer", version: 1 },
+        context: { phase: "chat" },
+        instructions: "Answer.",
+        messages: [{ role: "user", content: "Question?" }],
+        onDelta: (delta) => deltas.push(delta)
+      })
+    ).pipe(Effect.result, Effect.provide(layer))
+  )
+  return { result, calls, deltas }
+}
+
+describe("LanguageModel.generateText", () => {
+  it("streams the answer to onDelta and records the call", async () => {
+    const model = new MockLanguageModelV4({ doStream: textAnswer(["The limit ", "is 10 MB [1]."]) })
+    const { result, calls, deltas } = await runText(model)
+    expect(result).toMatchObject({ _tag: "Success", success: { text: "The limit is 10 MB [1].", truncated: false } })
+    expect(deltas).toEqual(["The limit ", "is 10 MB [1]."])
+    expect(calls).toMatchObject([{ task: "chat-answer", outcome: "success", outputTokens: 5 }])
+    expect(model.doStreamCalls[0]?.maxOutputTokens).toBe(512)
+  })
+
+  it("does not retry once part of the answer has been delivered", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [textAnswer(["Partial"], { failAfter: true }), textAnswer(["Again"])]
+    })
+    const { result, calls } = await runText(model)
+    expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "provider", retryable: false } })
+    expect(calls).toHaveLength(1)
+  })
+
+  it("retries a failure that happened before any text", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: [textAnswer([], { failAfter: true }), textAnswer(["Fine"])]
+    })
+    const { result, calls } = await runText(model)
+    expect(result).toMatchObject({ _tag: "Success", success: { text: "Fine" } })
+    expect(calls.map((call) => call.outcome)).toEqual(["error", "success"])
   })
 })
 
