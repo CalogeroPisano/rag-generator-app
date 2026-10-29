@@ -135,7 +135,7 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
         { path: "web/src/orders/service.ts", qualifiedName: "OrderService.create" },
         { path: "web/src/lib/money.ts", qualifiedName: "formatPrice" }
       ],
-      // Verification: 1 unsupported statement + 1 suspected missing rule + 1 statement without references.
+      // Verification: 1 unsupported statement + 1 missing rule + 1 statement without references.
       card: { status: "flagged", title: "Orders", unreferencedStatements: 1, issues: 3 }
     })
 
@@ -144,10 +144,8 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
     expect(view.verification).toMatchObject({
       cardVersion: 1,
       issues: 3,
-      model: "scripted-decision-model",
-      missing: [],
-      missingProbability: 0.8,
-      missingSuspected: true
+      model: "scripted-decision-model + scripted-test-model",
+      missing: [{ section: "validationRules", references: [{ path: "web/src/orders/service.ts", startLine: 5 }] }]
     })
     expect(view.verification?.statements.map((s) => [s.verdict, s.probability])).toEqual([
       ["supported", 0.95],
@@ -155,14 +153,14 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
       ["unsupported", 0.05],
       ["supported", 0.9]
     ])
-    // Statements citing code are asked about their lines only; the limit lost its reference and goes with the
-    // question on missing rules, which reads the whole feature.
+    // Statements citing code are asked about their lines only; the limit lost its reference and is asked about the
+    // whole feature.
     const verifyRequests = decisions.filter((d) => d.prompt.id === "card-verify")
     expect(verifyRequests.map((d) => Object.keys(d.questions))).toEqual([
       ["behavior.0"],
       ["parameters.0"],
       ["errors.0"],
-      ["missing", "limits.0"]
+      ["limits.0"]
     ])
     expect(verifyRequests[0]?.state).toContain("Source code cited by the statement")
     expect(verifyRequests[0]?.state).not.toContain("money.ts")
@@ -213,8 +211,9 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
     await run(Database.use(({ db }) => Effect.promise(() => db.execute(sql`update job set run_after = now()`))))
     const resumed = await runClaimed()
     expect(resumed.status).toBe("succeeded")
-    // One card written again, verified with four decision requests (three cited ranges + the whole feature).
-    expect(calls).toEqual(["card", "card-verify", "card-verify", "card-verify", "card-verify"])
+    // One card written again, verified with four decision requests (three cited ranges + the whole feature) and the
+    // missing items prompt.
+    expect(calls).toEqual(["card", "card-verify", "card-verify", "card-verify", "card-verify", "card-missing"])
   })
 
   it("skips files whose answer stays invalid and starts over on a new request", async () => {

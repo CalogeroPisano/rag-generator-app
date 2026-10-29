@@ -125,13 +125,10 @@ const respond = (request: StructuredRequest<OutputSchema>): unknown => {
 }
 
 const makeLayer = (databaseUrl: string) =>
-  Layer.mergeAll(
-    testAdapters,
-    scriptedEmbeddingModel(),
-    scriptedLanguageModel(respond),
-    // One question on missing rules per verified card.
-    scriptedDecisionModel((request) => ("missing" in request.questions && calls.push(request.prompt.id), {}))
-  ).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(makeTestDatabaseLayer(databaseUrl)))
+  Layer.mergeAll(testAdapters, scriptedEmbeddingModel(), scriptedLanguageModel(respond), scriptedDecisionModel()).pipe(
+    Layer.provideMerge(AppConfig.layer),
+    Layer.provideMerge(makeTestDatabaseLayer(databaseUrl))
+  )
 type Services = Layer.Success<ReturnType<typeof makeLayer>>
 
 const reviewer = { id: "user-1", name: "Revisore" }
@@ -249,7 +246,7 @@ describe.skipIf(url === undefined)("Incremental updates (PostgreSQL)", () => {
     expect(calls.filter((id) => id === "feature-map")).toHaveLength(0)
     expect(calls.filter((id) => id === "feature-update")).toHaveLength(1)
     expect(calls.filter((id) => id === "card")).toHaveLength(2)
-    expect(calls.filter((id) => id === "card-verify")).toHaveLength(2)
+    expect(calls.filter((id) => id === "card-missing")).toHaveLength(2)
     const updatePrompt = cardInputs.find((input) => input.includes("Feature: Orders"))
     expect(updatePrompt).toContain("Current card (update it")
     expect(updatePrompt).toContain("The code changed since the current card was written")

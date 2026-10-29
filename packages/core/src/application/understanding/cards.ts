@@ -6,10 +6,11 @@
 import { CARD, cardInstructions, renderCard, renderCardExcerpt } from "../prompts/card.ts"
 import { estimateTokens } from "../prompts/format.ts"
 import {
+  CARD_MISSING,
   CARD_VERIFY,
+  CardMissingOutput,
+  cardMissingInstructions,
   cardStatements,
-  MISSING_QUESTION,
-  missingQuestion,
   renderCardVerify,
   renderStatementState,
   statementQuestion
@@ -22,7 +23,7 @@ import type { FeatureSymbol, SnapshotId } from "../../domain/model.ts"
 import type { Declaration, NewVerification } from "../../ports/outbound/repositories.ts"
 import { KnowledgeRepository, UnderstandingRepository } from "../../ports/outbound/repositories.ts"
 import { buildCardExcerpts, citedExcerpts } from "./excerpts.ts"
-import { type CheckedCard, checkReferences } from "./references.ts"
+import { type CheckedCard, checkReferenceList, checkReferences } from "./references.ts"
 import { chunks, inputBudget } from "./shared.ts"
 
 export interface CardFeature {
@@ -143,12 +144,13 @@ const questionTokens = (questions: ReadonlyArray<readonly [string, DecisionQuest
   )
 
 /**
- * Verifies a card against the code of its feature with the decision model: the probability that each statement is
- * supported (verdict by threshold) and that the card misses user-visible rules. No text is generated.
+ * Verifies a card against the code of its feature.
  *
- * The model reads the state once per question, so the time grows with state size × questions: a statement that
- * cites code is asked about its cited lines only (statements citing the same lines share a request); the question
- * on missing rules and statements without references get the card and the code of the whole feature.
+ * The decision model gives the probability that each statement is supported (verdict by threshold), without
+ * generating text. It reads the state once per question, so the time grows with state size × questions: a statement
+ * that cites code is asked about its cited lines only (statements citing the same lines share a request); statements
+ * without references get the card and the code of the whole feature. The language model then lists what the code
+ * shows and the card is missing (a decision model cannot write that list).
  */
 export const verifyCard = Effect.fnUntraced(function* (
   context: CallContext,
@@ -157,11 +159,14 @@ export const verifyCard = Effect.fnUntraced(function* (
   card: { readonly content: CardContent; readonly version: number; readonly unreferencedStatements: number }
 ) {
   const decision = yield* DecisionModel
+  const model = yield* LanguageModel
   const understanding = yield* UnderstandingRepository
   const thresholds = (yield* AppConfig).verification
   const statements = cardStatements(card.content)
+  const cited = statements.flatMap((s) => s.cited)
   const budget = (questions: ReadonlyArray<readonly [string, DecisionQuestion]>, header: string) =>
     decision.contextTokens - estimateTokens(header) - questionTokens(questions) - DECISION_SAFETY_TOKENS
+  const cardHeader = renderCardVerify({ feature, card: card.content, excerpts: [] })
 
   // Statements grouped by the lines they cite.
   const byCitation = new Map<string, Array<(typeof statements)[number]>>()
@@ -181,23 +186,21 @@ export const verifyCard = Effect.fnUntraced(function* (
       groups.push({ state: renderStatementState({ feature, excerpts: excerpts.map(renderCardExcerpt) }), questions })
     }
   }
-
-  // The whole feature: the question on missing rules and the statements without references.
-  const whole: Array<readonly [string, DecisionQuestion]> = [
-    [MISSING_QUESTION, missingQuestion],
-    ...(byCitation.get("") ?? []).map((s) => [s.id, statementQuestion(s.text)] as const)
-  ]
-  const wholeParts = chunks(whole, decision.maxQuestions)
-  const header = renderCardVerify({ feature, card: card.content, excerpts: [] })
-  const { excerpts } = yield* excerptsFor(
-    context,
-    feature,
-    sources,
-    Math.min(...wholeParts.map((part) => budget(part, header))),
-    statements.flatMap((s) => s.cited)
+  const unreferenced = chunks(
+    (byCitation.get("") ?? []).map((s) => [s.id, statementQuestion(s.text)] as const),
+    decision.maxQuestions
   )
-  const wholeState = renderCardVerify({ feature, card: card.content, excerpts: excerpts.map(renderCardExcerpt) })
-  for (const part of wholeParts) groups.push({ state: wholeState, questions: part })
+  if (unreferenced.length > 0) {
+    const { excerpts } = yield* excerptsFor(
+      context,
+      feature,
+      sources,
+      Math.min(...unreferenced.map((part) => budget(part, cardHeader))),
+      cited
+    )
+    const state = renderCardVerify({ feature, card: card.content, excerpts: excerpts.map(renderCardExcerpt) })
+    for (const part of unreferenced) groups.push({ state, questions: part })
+  }
 
   const answers = new Map<string, number>()
   for (const group of groups) {
@@ -213,6 +216,25 @@ export const verifyCard = Effect.fnUntraced(function* (
     }
   }
 
+  // Missing items: the language model reads the card next to the code of the whole feature.
+  const { excerpts, shown } = yield* excerptsFor(
+    context,
+    feature,
+    sources,
+    inputBudget(model, cardMissingInstructions) - estimateTokens(cardHeader),
+    cited
+  )
+  const answer = yield* model.generateObject({
+    prompt: CARD_MISSING,
+    context,
+    instructions: cardMissingInstructions,
+    input: renderCardVerify({ feature, card: card.content, excerpts: excerpts.map(renderCardExcerpt) }),
+    schema: CardMissingOutput
+  })
+  const missing = answer.missing
+    .filter((item) => item.text.trim() !== "")
+    .map((item) => ({ ...item, text: item.text.trim(), references: checkReferenceList(item.references, shown) }))
+
   const verdictOf = (probability: number): StatementVerdict =>
     probability >= thresholds.supported ? "supported" : probability < thresholds.unsupported ? "unsupported" : "partial"
   const assessed = statements.map((statement) => {
@@ -221,16 +243,12 @@ export const verifyCard = Effect.fnUntraced(function* (
       ? { id: statement.id, verdict: "partial" as const, note: "Not assessed by the verifier." }
       : { id: statement.id, verdict: verdictOf(probability), note: "", probability }
   })
-  const missingProbability = answers.get(MISSING_QUESTION) ?? null
-  const missingSuspected = missingProbability !== null && missingProbability >= thresholds.missing
-  const issues =
-    assessed.filter((s) => s.verdict !== "supported").length + (missingSuspected ? 1 : 0) + card.unreferencedStatements
-  return {
-    cardVersion: card.version,
-    statements: assessed,
-    missing: [],
-    missingProbability,
-    missingSuspected,
-    issues
-  } satisfies NewVerification
+  const issues = assessed.filter((s) => s.verdict !== "supported").length + missing.length + card.unreferencedStatements
+  return { cardVersion: card.version, statements: assessed, missing, issues } satisfies NewVerification
 })
+
+/** Models of a verification, as recorded with it: decision model for the statements, language model for the rest. */
+export const verificationModel = (
+  decision: { readonly modelId: string },
+  model: { readonly modelId: string | undefined }
+) => ({ modelId: `${decision.modelId} + ${model.modelId ?? "unknown"}` })

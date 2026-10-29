@@ -32,7 +32,7 @@ Commercially distributable product, installed **on premise** with Docker Compose
   the code shown to the model. Works with any OpenAI-compatible endpoint (Ollama, vLLM), never the Vercel AI
   Gateway. Summaries and cards are written in English and stored in a separate Postgres schema, `rag`.
 - **Verification and review**: a decision model (`d1-omni` through Ollama) checks every card against the code in
-  seconds (probability per statement, suspected missing rules); side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
+  seconds (probability per statement), the chat model lists the rules the card misses; side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
   reviewer describes the mistake, the model rewrites the card) and regeneration. Corrections are kept and re-applied
   at every regeneration.
 - **Embedding index** in pgvector: every card that is not excluded is split into chunks (overview and sections) and

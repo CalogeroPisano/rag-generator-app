@@ -203,19 +203,6 @@ export function CardReview({
         )
       })}
 
-      {current && verification.missingSuspected && (
-        <div className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2">
-          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning" />
-          <span>
-            Il codice potrebbe contenere regole, limiti, errori o impostazioni che la scheda non descrive
-            {verification.missingProbability === null
-              ? ""
-              : ` (probabilità ${Math.round(verification.missingProbability * 100)}%)`}
-            : confrontala con il codice della funzionalità.
-          </span>
-        </div>
-      )}
-
       {current && verification.missing.length > 0 && (
         <section className="flex flex-col gap-2">
           <h3 className="flex items-center gap-2 font-medium">

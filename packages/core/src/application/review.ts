@@ -28,7 +28,14 @@ import {
   SnapshotRepository,
   UnderstandingRepository
 } from "../ports/outbound/repositories.ts"
-import { type CallContext, type CardSources, loadCardSources, verifyCard, writeCard } from "./understanding/cards.ts"
+import {
+  type CallContext,
+  type CardSources,
+  loadCardSources,
+  verificationModel,
+  verifyCard,
+  writeCard
+} from "./understanding/cards.ts"
 import { checkReferences } from "./understanding/references.ts"
 import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { requestIndexing } from "./rag/indexing.ts"
@@ -47,9 +54,15 @@ const featureWithCard = Effect.fnUntraced(function* (snapshotId: SnapshotId, fea
 const verifyStored = Effect.fnUntraced(function* (context: CallContext, featureId: string, sources: CardSources) {
   const knowledge = yield* KnowledgeRepository
   const decision = yield* DecisionModel
+  const model = yield* LanguageModel
   const { card } = yield* featureWithCard(context.snapshotId, featureId)
   const verification = yield* verifyCard(context, card.feature, sources, card)
-  yield* knowledge.saveVerification(context.snapshotId, card.id, verification, provenance(decision, CARD_VERIFY))
+  yield* knowledge.saveVerification(
+    context.snapshotId,
+    card.id,
+    verification,
+    provenance(verificationModel(decision, model), CARD_VERIFY)
+  )
 })
 
 /** Writes a new version of the card of a feature (from scratch or from the current one), then verifies it. */

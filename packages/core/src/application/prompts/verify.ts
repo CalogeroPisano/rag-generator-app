@@ -1,29 +1,44 @@
 /**
- * Verification of a card against the code, by the decision model: one yes/no
- * question per statement ("does the code support it?") and one about rules or
- * limits the card is missing. The state holds the card and the code excerpts.
+ * Verification of a card against the code. The decision model answers one
+ * yes/no question per statement ("does the code support it?"); the language
+ * model lists the rules or limits the card is missing (a decision model writes
+ * no text, so it cannot list them).
  */
-import type { CardContent, CardReference } from "../../domain/card.ts"
+import { Schema } from "effect"
+import { type CardContent, CardReference, CardSectionName } from "../../domain/card.ts"
 import type { DecisionQuestion, PromptRef } from "../../ports/outbound/models.ts"
+import { COMMON_RULES } from "./format.ts"
 
-export const CARD_VERIFY: PromptRef = { id: "card-verify", version: 2 }
-
-/** Name of the question about missing rules (statement questions are named after the statement id). */
-export const MISSING_QUESTION = "missing"
+/** Questions of the decision model on the statements. */
+export const CARD_VERIFY: PromptRef = { id: "card-verify", version: 3 }
 
 export const statementQuestion = (text: string): DecisionQuestion => ({
   instructions: `According to the source code, is this statement about the feature true? ${text}`
 })
 
-export const missingQuestion: DecisionQuestion = {
-  instructions:
-    "Does the source code show validation rules, limits, error messages or settings visible to the users of the " +
-    "feature that none of the card statements mention?",
-  criteria: {
-    true: "The code has user-visible rules, limits, errors or settings the card does not mention",
-    false: "Everything user-visible in the code is covered by the card, or only implementation details are left out"
-  }
-}
+/** Language model prompt: what the code shows and the card does not say. */
+export const CARD_MISSING: PromptRef = { id: "card-missing", version: 2 }
+
+export const CardMissingOutput = Schema.Struct({
+  missing: Schema.Array(
+    Schema.Struct({
+      section: CardSectionName,
+      text: Schema.String.annotate({ description: "What the card should also say, for an end user." }),
+      references: Schema.Array(CardReference)
+    })
+  ).annotate({ description: "Validations, limits, errors or settings visible in the code but missing from the card." })
+})
+export type CardMissingOutput = typeof CardMissingOutput.Type
+
+export const cardMissingInstructions = [
+  "You review the functional documentation of one feature of a software application against its source code.",
+  "List what the code does that matters to the users of the feature but is missing from the card: validation rules",
+  "it enforces, limits it applies, error messages it shows, settings it reads. Every item must describe something",
+  "the cited lines actually do. Never list what the code does not do (a check, a message or a limit that is absent),",
+  "never suggest improvements, and do not list implementation details or what the card already says in other words.",
+  "Cite the lines that show each item. An empty list is a valid answer.",
+  COMMON_RULES
+].join("\n")
 
 /** Card statements with stable ids (`section.index`), as the verifier sees them. */
 export const cardStatements = (
@@ -68,8 +83,8 @@ export const renderStatementState = (input: {
   ].join("\n")
 
 /**
- * State of the question on missing rules and of statements without references: the feature, the card and the code
- * it was written from.
+ * The card next to the code of the whole feature: input of the missing-items prompt and state of the questions on
+ * statements without references.
  */
 export const renderCardVerify = (input: {
   readonly feature: { readonly name: string; readonly description: string }

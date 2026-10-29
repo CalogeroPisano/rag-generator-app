@@ -83,7 +83,8 @@ Node's built-in `fetch`, which gives up after 5 minutes without response headers
 
 The worker verifies the cards with a **decision model** through Ollama's System One API (`POST /v1/systemone`,
 Ollama 0.35 or later): it answers yes/no questions with a probability and generates no text, so a card is verified in
-seconds. It is **required**: without the model the verification fails (`ollama pull d1-omni`). The default is
+seconds; the list of what a card is missing is still written by the chat model (`AI_MODEL`). It is **required**:
+without the model the verification fails (`ollama pull d1-omni`). The default is
 `d1-omni` by Liquid AI (600M parameters, about 850 MB; `d1`, 3B, is more accurate and slower). Both are released
 under the **LFM Open License v1.0** (see [Licenses](licenses.md#decision-model)).
 
@@ -99,7 +100,6 @@ under the **LFM Open License v1.0** (see [Licenses](licenses.md#decision-model))
 | `DECISION_KEEP_ALIVE`          | `10m`                 | How long Ollama keeps the model loaded                                           |
 | `VERIFY_SUPPORTED_THRESHOLD`   | `0.7`                 | A statement at or above this probability is confirmed                            |
 | `VERIFY_UNSUPPORTED_THRESHOLD` | `0.3`                 | Below this probability it is not confirmed (in between: partial)                 |
-| `VERIFY_MISSING_THRESHOLD`     | `0.5`                 | At or above this probability the card probably misses rules of the code          |
 
 ```bash
 docker compose exec ollama ollama pull d1-omni

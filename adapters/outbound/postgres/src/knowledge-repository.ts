@@ -290,8 +290,6 @@ export const KnowledgeRepositoryLive = Layer.effect(
                   model: v.model,
                   statements: v.statements,
                   missing: v.missing,
-                  missingProbability: v.missingProbability,
-                  missingSuspected: v.missingSuspected,
                   issues: v.issues
                 },
           corrections: corrections.map(correctionView)
@@ -368,8 +366,6 @@ export const KnowledgeRepositoryLive = Layer.effect(
               cardVersion: verification.cardVersion,
               statements: verification.statements,
               missing: verification.missing,
-              missingProbability: verification.missingProbability,
-              missingSuspected: verification.missingSuspected,
               issues: verification.issues,
               promptVersion: provenance.promptVersion,
               model: provenance.model,
@@ -568,10 +564,8 @@ export const KnowledgeRepositoryLive = Layer.effect(
               from ${cardReference} where ${eq(cardReference.cardId, source.id)}`)
             await tx.execute(sql`
               insert into ${cardVerification}
-                (card_id, card_version, statements, missing, missing_probability, missing_suspected, issues,
-                 prompt_version, model, verified_at)
-              select ${cardId}, card_version, statements, missing, missing_probability, missing_suspected, issues,
-                prompt_version, model, verified_at
+                (card_id, card_version, statements, missing, issues, prompt_version, model, verified_at)
+              select ${cardId}, card_version, statements, missing, issues, prompt_version, model, verified_at
               from ${cardVerification} where ${eq(cardVerification.cardId, source.id)}`)
             // Same text, same vectors: the copied card does not need to be embedded again.
             await tx.execute(sql`

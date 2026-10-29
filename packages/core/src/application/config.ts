@@ -14,8 +14,6 @@ export interface AppConfigShape {
     readonly supported: number
     /** A statement below this probability is unsupported (in between: partial). */
     readonly unsupported: number
-    /** At or above this probability the card is missing rules of the code (one more issue). */
-    readonly missing: number
   }
   readonly rag: {
     /** Cards given to the chat model per question. */
@@ -58,8 +56,7 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()("cod
         snapshotRetention: Math.max(1, yield* Config.Int("SNAPSHOT_RETENTION").pipe(Config.withDefault(3))),
         verification: {
           supported: yield* probability("VERIFY_SUPPORTED_THRESHOLD", 0.7),
-          unsupported: yield* probability("VERIFY_UNSUPPORTED_THRESHOLD", 0.3),
-          missing: yield* probability("VERIFY_MISSING_THRESHOLD", 0.5)
+          unsupported: yield* probability("VERIFY_UNSUPPORTED_THRESHOLD", 0.3)
         },
         rag: {
           topCards: yield* Config.Int("RAG_TOP_CARDS").pipe(Config.withDefault(5)),

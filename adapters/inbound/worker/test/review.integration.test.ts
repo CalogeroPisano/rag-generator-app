@@ -109,6 +109,7 @@ describe.skipIf(url === undefined)("card review (PostgreSQL)", () => {
     expect((await currentCard(snapshotId, featureId)).status).toBe("flagged")
 
     await run(Knowledge.setCardStatus(snapshotId, cardId, "approved", reviewer))
+    respond = (request) => (request.prompt.id === "card-missing" ? { missing: [] } : defaultRespond(request))
     decide = cleanDecide
     const job = await run(Knowledge.requestCardOperation(snapshotId, cardId, "verify"))
     // One active job per card: asking again returns the same job.
@@ -134,7 +135,9 @@ describe.skipIf(url === undefined)("card review (PostgreSQL)", () => {
               }
             ]
           }
-        : defaultRespond(request)
+        : request.prompt.id === "card-missing"
+          ? { missing: [] }
+          : defaultRespond(request)
     decide = cleanDecide
 
     await run(Knowledge.correctCard(snapshotId, cardId, "The limit is in service.ts, line 5.", reviewer))

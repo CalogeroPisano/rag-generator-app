@@ -368,8 +368,6 @@ export interface NewVerification {
   readonly cardVersion: number
   readonly statements: CardVerification["statements"]
   readonly missing: CardVerification["missing"]
-  readonly missingProbability: number | null
-  readonly missingSuspected: boolean
   readonly issues: number
 }
 

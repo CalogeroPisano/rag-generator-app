@@ -116,14 +116,13 @@ inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
 ### Data flow (phase 4: verification and review)
 
 1. `verify-cards` (understanding) and card jobs use `verifyCard` (`core/src/application/understanding/cards.ts`,
-   `card-verify` v2) on the **decision model** (`DecisionModel`, required, default `d1-omni`): one yes/no question per
-   statement id `section.index` → probability → verdict by `VERIFY_*_THRESHOLD` (AppConfig `verification`), plus one
-   question on missing rules (`missingProbability`/`missingSuspected`; it cannot list them). Ollama reads the state
-   again for every question (input tokens = state × questions): statements citing code get only their cited lines
-   (`citedExcerpts`, grouped by identical citations); the missing-rules question and unreferenced statements get the
-   whole feature (`buildCardExcerpts` within `DECISION_CONTEXT_TOKENS`). → `rag.card_verification` (per card
-   version); `saveVerification` moves only `generated`↔`flagged`. Older verifications (language model) keep notes and
-   `missing` items.
+   `card-verify` v3) on the **decision model** (`DecisionModel`, required, default `d1-omni`): one yes/no question per
+   statement id `section.index` → probability → verdict by `VERIFY_*_THRESHOLD` (AppConfig `verification`). Ollama
+   reads the state again for every question (input tokens = state × questions): statements citing code get only
+   their cited lines (`citedExcerpts`, grouped by identical citations); unreferenced statements get the whole feature
+   (`buildCardExcerpts` within `DECISION_CONTEXT_TOKENS`). Then the language model lists missing items (prompt
+   `card-missing`, user's choice: the decision model cannot list them). → `rag.card_verification` (per card version,
+   `model` = "decision + language"); `saveVerification` moves only `generated`↔`flagged`.
 2. Card operations needing a model are `card` jobs (`core/src/application/review.ts`, `cardPipeline`, single phase `process`):
    `job.payload` = `{ cardId, featureId, operation: verify|regenerate|correct }`, `dedupe_key` = feature id. The card is
    looked up by feature (regeneration replaces the card row; `saveCard` continues the version number).
@@ -299,8 +298,10 @@ of every new dependency before adding it.
   copied with their review; incremental feature map; the last `SNAPSHOT_RETENTION` (3) versions are kept.
 - Decision model (user's choice, to cut analysis time): card verification by `d1-omni` (Liquid AI, LFM Open License
   v1.0: commercial use only below 10 M$ annual revenue, documented in docs/licenses.md) through Ollama's System One
-  API; required, no fallback to the language model. Measured on the dev project (8 cards, 103 statements): 37 min with
-  qwen3:4b → about 30 s. Feature triage before cards and file triage before summaries (points 2 and 3) are pending
+  API, for the statements; required, no fallback to the language model. Missing items stay with the language model
+  (`card-missing`, user's choice; a yes/no "anything missing?" question to d1-omni answered at random). Measured on
+  the dev project (8 cards, 103 statements): statements 37 min with qwen3:4b → about 30 s; whole verification with
+  `card-missing` on qwen3:4b (GTX 1050 Ti) about 60–120 s per card instead of about 220 s. Feature triage before cards and file triage before summaries (points 2 and 3) are pending
   the user's feedback.
 - Phase 7 (user's choices): export only, no import; everything of the version in use including embeddings; scope
   chosen at every export (all but excluded / approved only); SQL with the same `rag` schema (re-runnable, replaces the

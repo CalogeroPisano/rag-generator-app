@@ -251,15 +251,11 @@ export class CardVerification extends Schema.Class<CardVerification>("CardVerifi
       probability: Schema.optional(Schema.Number)
     })
   ),
-  /** Rules the card is missing, as listed by a language model (verifications before the decision model). */
+  /** What the code shows and the card does not say, listed by the language model. */
   missing: Schema.Array(
     Schema.Struct({ section: CardSectionName, text: Schema.String, references: Schema.Array(CardReference) })
   ),
-  /** Probability that the card misses user-visible rules of the code (decision model); null before it. */
-  missingProbability: Schema.NullOr(Schema.Number),
-  /** `missingProbability` reached the threshold: counted as one issue. */
-  missingSuspected: Schema.Boolean,
-  /** Statements not fully supported + missing items (or suspected missing rules) + statements without references. */
+  /** Statements not fully supported + missing items + statements without references. */
   issues: Schema.Int
 }) {}
 

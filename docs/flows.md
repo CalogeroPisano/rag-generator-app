@@ -180,7 +180,7 @@ only masked contents and the static analysis, and writes only to the `rag` schem
 flowchart LR
   prepare["prepare<br/>reset rag data"] --> files["summarize-files<br/>declarations + file"]
   files --> modules["summarize-modules<br/>bottom-up"] --> map["map-features<br/>features + files"]
-  map --> cards["generate-cards<br/>one per feature"] --> verify["verify-cards<br/>decision model"]
+  map --> cards["generate-cards<br/>one per feature"] --> verify["verify-cards<br/>decision + chat model"]
   verify --> finalize["finalize<br/>counts, ready, queue indexing"]
 ```
 
@@ -191,7 +191,7 @@ flowchart LR
 | `summarize-modules` | Directories bottom-up, from the summaries of their files and sub-modules; pass-through directories (one child, no files) are skipped. The root module is the project overview.                                                                                                                                                                                                                                                |
 | `map-features`      | The model lists the user-level features with their files and declarations, from the module overview and one line per file. Large projects are mapped in batches, then the candidates are merged. Paths and declarations that do not exist are dropped.                                                                                                                                                                        |
 | `generate-cards`    | For each feature, the files are read together: whole when they fit, otherwise the declarations of the feature with some context, then the first lines of the other files, then summaries only. The card cites path and lines for every statement; references outside the lines shown are dropped and statements left without one are counted. Resumable per card.                                                             |
-| `verify-cards`      | Decision model on every card against its code (see [Review](#automatic-verification)). Resumable: cards whose current version is verified are skipped.                                                                                                                                                                                                                                                                        |
+| `verify-cards`      | Every card against its code: decision model on the statements, chat model for missing items (see [Review](#automatic-verification)). Resumable: cards whose current version is verified are skipped.                                                                                                                                                                                                                          |
 | `finalize`          | Counts features and cards, `understanding_status = ready`, queues the indexing of the cards for the chat (when `EMBEDDING_MODEL` is set).                                                                                                                                                                                                                                                                                     |
 
 - **Streaming**: answers are always streamed and parsed at the end. Model calls go through undici's `fetch` with no
@@ -218,27 +218,29 @@ flowchart LR
 
 ### Automatic verification
 
-`verify-cards` (last phase of the understanding) and the "Verifica" action on a card ask the **decision model**
-(`DecisionModel`, Ollama's System One API, `d1-omni` by default) yes/no questions (`card-verify` version 2,
-`packages/core/src/application/prompts/verify.ts`). It generates no text: every answer is the probability of "true",
-computed in one pass. Statements are identified as `section.index`:
+`verify-cards` (last phase of the understanding) and the "Verifica" action on a card check the card in two steps
+(`packages/core/src/application/prompts/verify.ts`). Statements are identified as `section.index`.
 
-- **one question per statement**: "according to the source code, is this statement true?". Ollama reads the state
-  again for every question (the input tokens are state × questions), so a statement that cites code gets only its
-  cited lines with 10 lines of context (`citedExcerpts`); statements citing the same lines share a request;
-- **one question on missing rules**: "does the code show validation rules, limits, errors or settings that no
-  statement mentions?", with the card and the code of the whole feature as the state (`buildCardExcerpts`, sized to
-  `DECISION_CONTEXT_TOKENS`); statements without references are asked in the same request;
-- verdicts by threshold: `supported` at or above `VERIFY_SUPPORTED_THRESHOLD` (0.7), `unsupported` below
-  `VERIFY_UNSUPPORTED_THRESHOLD` (0.3), `partial` in between; the probability is stored with the verdict and shown on
-  the review page. Missing rules are suspected at or above `VERIFY_MISSING_THRESHOLD` (0.5): the decision model cannot
-  list them, the review page asks to compare the card with the code.
+1. **Statements, by the decision model** (`DecisionModel`, Ollama's System One API, `d1-omni` by default; questions
+   `card-verify` version 3). It generates no text: every answer is the probability of "true", computed in one pass.
+   - One question per statement: "according to the source code, is this statement true?". Ollama reads the state
+     again for every question (the input tokens are state × questions), so a statement that cites code gets only its
+     cited lines with 10 lines of context (`citedExcerpts`); statements citing the same lines share a request.
+     Statements without references are asked with the card and the code of the whole feature
+     (`buildCardExcerpts`, sized to `DECISION_CONTEXT_TOKENS`).
+   - Verdicts by threshold: `supported` at or above `VERIFY_SUPPORTED_THRESHOLD` (0.7), `unsupported` below
+     `VERIFY_UNSUPPORTED_THRESHOLD` (0.3), `partial` in between; the probability is stored with the verdict and shown
+     on the review page.
+2. **Missing items, by the language model** (prompt `card-missing`): it reads the card next to the code of the
+   feature and lists what the code shows and the card misses (validation rules, limits, errors, settings), with the
+   lines that show it; references outside the shown code are dropped. A decision model cannot write this list: asked
+   only whether something was missing, `d1-omni` answered at random.
 
-The result is stored per card version in `rag.card_verification` (verifications written by the language model before
-version 2 keep their notes and their list of missing items):
+The result is stored per card version in `rag.card_verification`, with both models in `model` (e.g.
+`d1-omni + code-to-rag-dev`); verifications before `card-verify` version 3 were written by the language model alone
+and keep their notes:
 
-- `issues` = statements not fully supported + 1 when missing rules are suspected (or the listed missing items of an
-  older verification) + statements without references;
+- `issues` = statements not fully supported + missing items + statements without references;
 - a card still `generated` or `flagged` becomes `flagged` when issues were found, `generated` otherwise; review
   decisions (`in_review`, `approved`, `excluded`) are not touched;
 - a verification of an older version is shown as outdated; the next understanding run verifies the card again.

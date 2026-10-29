@@ -286,8 +286,6 @@ erDiagram
     int card_version
     jsonb statements "[{id, verdict, note, probability?}]"
     jsonb missing "[{section, text, references}]"
-    float8 missing_probability
-    bool missing_suspected
     int issues
     text model
     timestamptz verified_at
@@ -379,11 +377,10 @@ erDiagram
   `created` (new feature); null when written by a full understanding. `version` continues across versions of the
   code.
 - `unreferenced_statements` counts statements left without a valid reference; they count as verification issues.
-- **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`. Written
-  by the decision model since `prompt_version` 2: each statement has the `probability` that the code supports it,
-  `missing_probability` is the probability that the card misses user-visible rules and `missing_suspected` whether it
-  reached the threshold (one issue); `missing` stays empty. Older verifications (language model) have notes and a
-  list of `missing` items, `missing_probability` null.
+- **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`. Since
+  `prompt_version` 3 each statement has the `probability` (decision model) that the code supports it; `missing` is
+  listed by the language model; `model` names both. Older verifications (language model alone) have a `note` per
+  statement instead.
 - **correction**: reviewer corrections. They do not cascade from `rag.snapshot`: they belong to the project and to a
   feature name, survive new feature maps (re-attached by `feature_key`) and are deleted only with the project.
 - The reviewer's name is copied into `card.reviewed_by` and `correction.author_name` (no link to the application's

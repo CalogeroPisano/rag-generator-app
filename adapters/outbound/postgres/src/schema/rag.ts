@@ -203,10 +203,6 @@ export const cardVerification = rag.table("card_verification", {
   statements: jsonb("statements").notNull(),
   /** `[{ section, text, references }]`: what the code shows and the card does not say. */
   missing: jsonb("missing").notNull(),
-  /** Probability that the card misses user-visible rules (decision model); null in older verifications. */
-  missingProbability: doublePrecision("missing_probability"),
-  /** `missing_probability` reached the threshold (counted in `issues`). */
-  missingSuspected: boolean("missing_suspected").default(false).notNull(),
   issues: integer("issues").notNull(),
   promptVersion: integer("prompt_version").notNull(),
   model: text("model").notNull(),

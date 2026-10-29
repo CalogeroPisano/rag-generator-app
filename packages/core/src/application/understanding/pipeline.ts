@@ -63,7 +63,7 @@ import { featureKey } from "../../domain/features.ts"
 import { dedupeFeatures, mergeFeatures, normalizeFeatures } from "./features.ts"
 import { planModules } from "./modules.ts"
 import { splitIntoParts } from "./parts.ts"
-import { loadCardSources, verifyCard, writeCard } from "./cards.ts"
+import { loadCardSources, verificationModel, verifyCard, writeCard } from "./cards.ts"
 import { selectFiles } from "./select.ts"
 import { chunks, groupBy, inputBudget, provenance, skipInvalid, toPhaseError } from "./shared.ts"
 import {
@@ -729,6 +729,7 @@ const verifyCards = Effect.fn("understanding.verifyCards")(
   function* (job: Job, progress: Progress) {
     const knowledge = yield* KnowledgeRepository
     const decision = yield* DecisionModel
+    const model = yield* LanguageModel
     const context = { phase: "verify-cards", jobId: job.id, snapshotId: job.snapshotId }
     const pending = yield* knowledge.cardsToVerify(job.snapshotId)
     const sources = yield* loadCardSources(job.snapshotId)
@@ -753,7 +754,12 @@ const verifyCards = Effect.fn("understanding.verifyCards")(
             completed++
             if (verification === undefined) return
             if (verification.issues > 0) flagged++
-            yield* knowledge.saveVerification(job.snapshotId, cardId, verification, provenance(decision, CARD_VERIFY))
+            yield* knowledge.saveVerification(
+              job.snapshotId,
+              cardId,
+              verification,
+              provenance(verificationModel(decision, model), CARD_VERIFY)
+            )
           }),
         { concurrency: "unbounded", discard: true }
       )

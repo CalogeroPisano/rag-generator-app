@@ -84,20 +84,27 @@ export const defaultRespond = (request: StructuredRequest<OutputSchema>): unknow
       }
     case "card":
       return card
+    case "card-missing":
+      return {
+        missing: [
+          {
+            section: "validationRules",
+            text: "The quantity must not exceed 100.",
+            references: [{ path: "web/src/orders/service.ts", startLine: 5, endLine: 5 }]
+          }
+        ]
+      }
     default:
       return undefined
   }
 }
 
-/**
- * Decision model answers of the card verification: the invented limit is unsupported, the rest supported, and the
- * card probably misses the quantity rule.
- */
+/** Decision model answers of the card verification: the invented limit is unsupported, the rest supported. */
 export const defaultDecide = (request: DecisionRequest): Record<string, number> =>
   request.prompt.id === "card-verify"
-    ? { "behavior.0": 0.95, "parameters.0": 0.92, "limits.0": 0.05, "errors.0": 0.9, missing: 0.8 }
+    ? { "behavior.0": 0.95, "parameters.0": 0.92, "limits.0": 0.05, "errors.0": 0.9 }
     : {}
 
-/** A verification that finds nothing to report. */
+/** Decision model answers of a verification that finds nothing to report. */
 export const cleanDecide = (request: DecisionRequest): Record<string, number> =>
-  Object.fromEntries(Object.keys(request.questions).map((name) => [name, name === "missing" ? 0.1 : 0.95]))
+  Object.fromEntries(Object.keys(request.questions).map((name) => [name, 0.95]))
