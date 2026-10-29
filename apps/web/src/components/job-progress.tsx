@@ -1,6 +1,17 @@
-import { CheckCircle2Icon, CircleIcon, RotateCcwIcon, XCircleIcon } from "lucide-react"
+import { CheckCircle2Icon, CircleIcon, RotateCcwIcon, SquareIcon, XCircleIcon } from "lucide-react"
 import { JobStatusBadge } from "@/components/status-badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -26,11 +37,15 @@ const time = new Intl.DateTimeFormat("it-IT", { timeStyle: "medium" })
 export function JobProgress({
   stream,
   onRetry,
-  retrying
+  retrying,
+  onCancel,
+  cancelling
 }: {
   stream: JobStream
   onRetry: () => void
   retrying: boolean
+  onCancel: () => void
+  cancelling: boolean
 }) {
   const { job, events } = stream
   if (job === undefined) {
@@ -59,8 +74,31 @@ export function JobProgress({
         <CardDescription>
           Tentativo {Math.max(job.attempts, 1)} di {job.maxAttempts}
         </CardDescription>
-        <CardAction>
+        <CardAction className="flex items-center gap-2">
           <JobStatusBadge status={job.status} />
+          {(job.status === "queued" || job.status === "running") && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="sm" variant="outline" disabled={cancelling}>
+                  {cancelling ? <Spinner data-icon="inline-start" /> : <SquareIcon data-icon="inline-start" />}
+                  Interrompi
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Interrompere l'operazione?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Il lavoro già salvato resta: «Riprendi» riparte dalla fase interrotta. La chiamata al modello in
+                    corso viene abbandonata entro pochi secondi.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Annulla</AlertDialogCancel>
+                  <AlertDialogAction onClick={onCancel}>Interrompi</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -81,7 +119,20 @@ export function JobProgress({
         {job.progress !== null && job.progress.message !== null && job.status === "running" && (
           <p className="text-sm text-muted-foreground">{job.progress.message}</p>
         )}
-        {job.lastError !== null && job.status !== "succeeded" && (
+        {job.status === "cancelled" && (
+          <Alert>
+            <AlertTitle>{jobTypes[job.type].title}: operazione interrotta</AlertTitle>
+            <AlertDescription>
+              <p>Il lavoro già salvato resta disponibile.</p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={onRetry} disabled={retrying}>
+                {retrying ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}
+                Riprendi dalla fase interrotta
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+        {/* The last error of an earlier attempt matters while waiting for a retry, not once the job runs again. */}
+        {job.lastError !== null && (job.status === "queued" || job.status === "failed") && (
           <Alert variant={job.status === "failed" ? "destructive" : "default"}>
             <AlertTitle>
               {job.status === "failed" ? `${jobTypes[job.type].title}: operazione non riuscita` : "Errore temporaneo"}

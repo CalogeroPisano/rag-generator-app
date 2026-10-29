@@ -1,4 +1,5 @@
 import {
+  cancelJob,
   CreateProjectInput,
   createProject,
   Job,
@@ -65,6 +66,12 @@ export const retryJob = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(validate(Schema.Struct({ jobId: JobId })))
   .handler(({ data }) => runEffect(JobRepository.use((jobs) => jobs.retry(data.jobId)).pipe(Effect.map(encodeJob))))
+
+/** Stops a queued or running job ("Interrompi"); "Riprendi" (retryJob) resumes it from the interrupted phase. */
+export const stopJob = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(validate(Schema.Struct({ jobId: JobId })))
+  .handler(({ data }) => runEffect(cancelJob(data.jobId).pipe(Effect.map(encodeJob))))
 
 export const listFiles = createServerFn({ method: "GET" })
   .middleware([authMiddleware])

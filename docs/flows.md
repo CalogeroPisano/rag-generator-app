@@ -60,14 +60,26 @@ stateDiagram-v2
   running --> queued: transient error<br/>(retry with backoff)
   running --> failed: permanent error<br/>or attempts exhausted
   running --> queued: worker stopped (release)<br/>or no heartbeat (requeue)
+  queued --> cancelled: Interrompi
+  running --> cancelled: Interrompi<br/>(worker stops at the next heartbeat)
   failed --> queued: manual retry<br/>(resumes from the failed phase)
+  cancelled --> queued: Riprendi<br/>(resumes from the interrupted phase)
   succeeded --> [*]
 ```
 
 - **Claim**: each worker takes the oldest runnable job with `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED
 LIMIT 1)`. Two workers never take the same job. The claim increments the attempt count.
 - **Heartbeat**: every 15 seconds the worker updates `heartbeat_at`. A `running` job with no heartbeat for more than
-  2 minutes is put back in the queue (or marked failed when it has no attempts left).
+  2 minutes is put back in the queue (or marked failed when it has no attempts left) by the maintenance of the
+  **other** workers: a worker never requeues its own jobs (its process is alive). Failed heartbeats are logged.
+- **Fencing**: a run holds the job through its attempt number. The heartbeat, success, failure, retry and release of
+  a run apply only while the job is still `running` with that attempt. When the heartbeat finds the job taken away
+  (cancelled, or requeued and claimed again), the run is interrupted: two runs of the same job never go on together,
+  and a late run cannot overwrite the state of the current one.
+- **Interrompi** (progress card): a queued job is cancelled at once; a running one is marked `cancelled` and its
+  worker stops it within a heartbeat (the model call in progress is abandoned). What the job was producing is marked
+  failed (snapshot for the acquisition, analysis, understanding, test run); data already saved stays. **Riprendi**
+  queues it again from the interrupted phase.
 - **Errors**: each phase reports whether an error is recoverable. Corrupted archives, exceeded limits, rejected
   credentials or missing repositories fail immediately; network, database or filesystem errors are retried with
   growing delays (30 s, 60 s, 120 s… up to 15 minutes) within `JOB_MAX_ATTEMPTS`.

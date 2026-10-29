@@ -123,7 +123,7 @@ describe("scanTree", () => {
       ["src/b.ts", "included"],
       ["src/link", "symlink"]
     ])
-    expect(seen[2]?.content).toBe(`const password = "[REDACTED:assigned-secret]"\n`)
+    expect(seen[2]?.content).toBe(`const password = "[REDACTED:assigned-password]"\n`)
     expect(summary).toMatchObject({ includedFiles: 2, excludedFiles: 3, maskedSecrets: 1 })
 
     const again = await Effect.runPromise(scanTree(root, defaultLimits, [], () => Effect.void))

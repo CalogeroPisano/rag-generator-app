@@ -103,9 +103,9 @@ describe.skipIf(url === undefined)("acquisition pipeline (PostgreSQL)", () => {
       SnapshotRepository.use((snapshots) => snapshots.getFileContent(snapshot.id, "src/orders/service.ts"))
     )
     expect(content.content).not.toContain("Pr0d!Passw0rd#2024")
-    expect(content.content).toContain("[REDACTED:assigned-secret]")
+    expect(content.content).toContain("[REDACTED:assigned-password]")
     expect(content.content).toContain(`throw new Error("Massimo 100 pezzi")`)
-    expect(content.secrets).toEqual([{ rule: "assigned-secret", line: 1 }])
+    expect(content.secrets).toEqual([{ rule: "assigned-password", line: 1 }])
 
     const config = await run(Effect.service(AppConfig))
     expect(await fs.readdir(config.uploadsDir)).toEqual([])

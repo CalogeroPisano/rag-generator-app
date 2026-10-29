@@ -13,7 +13,7 @@ import {
   SnapshotRepository,
   understandingPipeline
 } from "@code-to-rag/core"
-import { Config, Duration, Effect, Option, Schedule } from "effect"
+import { Config, Deferred, Duration, Effect, Option, Schedule } from "effect"
 
 export interface WorkerOptions {
   readonly workerId: string
@@ -43,16 +43,8 @@ const pipelines = {
   evaluation: evaluationPipeline
 } as const satisfies Record<JobType, unknown>
 
-/** Runs one job while a background fiber keeps its heartbeat fresh. */
-const processJob = Effect.fnUntraced(function* (job: Job, options: WorkerOptions) {
-  const jobs = yield* JobRepository
-  yield* jobs
-    .heartbeat(job.id, options.workerId)
-    .pipe(Effect.ignore, Effect.repeat(Schedule.spaced(options.heartbeatInterval)), Effect.forkScoped)
-  yield* Effect.logInfo("Job started").pipe(
-    Effect.annotateLogs({ jobId: job.id, type: job.type, attempt: job.attempts })
-  )
-  // Each job type has its own pipeline (and service requirements).
+/** Runs the pipeline of a job; each job type has its own pipeline (and service requirements). */
+const runPipeline = Effect.fnUntraced(function* (job: Job) {
   switch (job.type) {
     case "acquisition":
       return yield* runJob(pipelines.acquisition, job)
@@ -69,6 +61,40 @@ const processJob = Effect.fnUntraced(function* (job: Job, options: WorkerOptions
     case "evaluation":
       return yield* runJob(pipelines.evaluation, job)
   }
+})
+
+/**
+ * Runs one job while a background fiber keeps its heartbeat fresh. When the
+ * heartbeat finds that the job is no longer this run's (cancelled by a user,
+ * or requeued and claimed again), the run is interrupted: two runs of the same
+ * job never go on together.
+ */
+const processJob = Effect.fnUntraced(function* (job: Job, options: WorkerOptions) {
+  const jobs = yield* JobRepository
+  const lost = yield* Deferred.make<boolean>()
+  yield* jobs.heartbeat(job.id, options.workerId, job.attempts).pipe(
+    Effect.flatMap((owned) => (owned ? Effect.void : Deferred.succeed(lost, true))),
+    // A failed heartbeat is retried at the next tick; logged, since a job without heartbeats looks abandoned.
+    Effect.catch((error) =>
+      Effect.logWarning("Heartbeat failed").pipe(Effect.annotateLogs({ jobId: job.id, operation: error.operation }))
+    ),
+    Effect.repeat(Schedule.spaced(options.heartbeatInterval)),
+    Effect.forkScoped
+  )
+  yield* Effect.logInfo("Job started").pipe(
+    Effect.annotateLogs({ jobId: job.id, type: job.type, attempt: job.attempts })
+  )
+  yield* runPipeline(job).pipe(
+    Effect.raceFirst(
+      Deferred.await(lost).pipe(
+        Effect.andThen(
+          Effect.logWarning("Job stopped: cancelled or taken over by another run").pipe(
+            Effect.annotateLogs({ jobId: job.id, attempt: job.attempts })
+          )
+        )
+      )
+    )
+  )
 }, Effect.scoped)
 
 /** One consumer: claims and runs jobs until interrupted. */
@@ -93,7 +119,11 @@ const maintenance = (options: WorkerOptions) =>
   Effect.gen(function* () {
     const jobs = yield* JobRepository
     const snapshots = yield* SnapshotRepository
-    const requeued = yield* jobs.requeueStale(new Date(Date.now() - Duration.toMillis(options.staleAfter)))
+    // This worker's own jobs are alive by definition: only other (dead) workers' jobs are requeued.
+    const requeued = yield* jobs.requeueStale(
+      new Date(Date.now() - Duration.toMillis(options.staleAfter)),
+      options.workerId
+    )
     if (requeued > 0) yield* Effect.logWarning("Requeued abandoned jobs").pipe(Effect.annotateLogs({ requeued }))
     const keep = new Set<string>(yield* snapshots.pendingUploadIds)
     yield* removeStaleUploads(Duration.toMillis(Duration.hours(24)), keep)

@@ -11,6 +11,9 @@
   OpenAI/Anthropic-style keys, JWTs, `Authorization` headers, credentials in connection strings, PEM private keys,
   and values assigned to sensitive keys (`password`, `secret`, `token`, `api_key`…). For the latter, messages,
   references to environment variables and low-entropy values are ignored, so validation messages stay readable.
+  Keys that name a password (`password`, `passwd`, `pwd`, `passphrase`) are stricter: any literal without spaces is
+  masked, however short or simple (`password: 'test'`), since weak and test passwords are real credentials too.
+  Projects acquired before this rule keep their stored contents: acquire them again (new project) to apply it.
   Unquoted values are masked only in configuration-like files (`.env`, properties/ini, YAML, TOML, shell…): in source
   code they are expressions (`password: z.string()`, `password = request.form["password"]`), and masking them
   would hide code without protecting anything.

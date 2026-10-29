@@ -152,7 +152,9 @@ kept`), updates from the previous card (`changedFiles` in the CARD prompt, `base
   Effect durable workflows later.
 - The runner (`core/src/pipeline.ts`) records `completed_phases`; a failed job resumes from the failed phase.
   `PhaseError.retryable` decides between automatic retry (exponential backoff, `max_attempts`) and immediate failure.
-- Worker heartbeat every 15 s; `requeueStale` re-queues jobs of dead workers (or fails them when out of attempts).
+- Worker heartbeat every 15 s; `requeueStale` re-queues jobs of dead workers (or fails them when out of attempts),
+  never the caller's own. Runs are fenced by `job.attempts` (heartbeat/succeed/fail/scheduleRetry/release take the
+  attempt): a run whose job was cancelled ("Interrompi", `cancelJob`) or claimed again is interrupted by its worker.
   SIGTERM interrupts the worker: running jobs are released without consuming an attempt.
 
 ### Security rules

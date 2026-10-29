@@ -50,6 +50,9 @@ const configLanguages = new Set([
 
 const sensitiveKey = String.raw`[A-Za-z0-9_.-]*(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|credentials?|conn(?:ection)?[_-]?str(?:ing)?)[A-Za-z0-9_.-]*`
 
+/** Keys that name a password: any literal assigned to them is masked, however short or simple. */
+const passwordKey = String.raw`[A-Za-z0-9_.-]*(?:password|passwd|pwd|passphrase)[A-Za-z0-9_.-]*`
+
 /** Values that are clearly not secrets even when assigned to a sensitive-looking key. */
 const harmlessValues = new Set([
   "password",
@@ -80,15 +83,30 @@ const shannonEntropy = (value: string): number => {
   return entropy
 }
 
+/** References, environment lookups and template placeholders: the value is elsewhere, not in the file. */
+const isReference = (value: string): boolean =>
+  /^(?:\$|%|\{\{|<|process\.env|env\(|os\.environ|System\.getenv|Environment\.)/i.test(value)
+
 /** Accepts literal values that look like real credentials rather than references or messages. */
 const looksLikeSecretValue = (value: string): boolean => {
   if (value.length < 6) return false
   if (/\s/.test(value)) return false
-  if (/^(?:\$|%|\{\{|<|process\.env|env\(|os\.environ|System\.getenv|Environment\.)/i.test(value)) return false
+  if (isReference(value)) return false
   if (/^[*xX•.-]+$/.test(value)) return false
   if (harmlessValues.has(value.toLowerCase())) return false
   return shannonEntropy(value) >= 2.5
 }
+
+/**
+ * Accepts any literal assigned to a password key: weak and test passwords ("test", "admin1") are still real
+ * credentials. Messages (with spaces), references, masks and type names are left alone.
+ */
+const looksLikePasswordValue = (value: string): boolean =>
+  value.length > 0 &&
+  !/\s/.test(value) &&
+  !isReference(value) &&
+  !/^[*xX•.-]+$/.test(value) &&
+  !["null", "undefined", "none", "true", "false", "string", "required", "text", "hidden"].includes(value.toLowerCase())
 
 const rules: ReadonlyArray<Rule> = [
   {
@@ -124,6 +142,20 @@ const rules: ReadonlyArray<Rule> = [
     id: "url-credentials",
     pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"'`]+:(?<secret>[^\s@"'`/]+)@/dgi,
     accept: (secret) => !/^(?:\$|\{|%|\*+$)/.test(secret)
+  },
+  {
+    id: "assigned-password",
+    pattern: new RegExp(
+      String.raw`${passwordKey}["'\]]?\s*(?:=|:=|:|=>)\s*@?(?<quote>["'\`])(?<secret>[^"'\`\r\n]+)\k<quote>`,
+      "dgi"
+    ),
+    accept: looksLikePasswordValue
+  },
+  {
+    id: "assigned-password",
+    pattern: new RegExp(String.raw`^\s*(?:export\s+)?${passwordKey}\s*[=:]\s*(?<secret>[^\s"'\`#;]+)`, "dgim"),
+    accept: looksLikePasswordValue,
+    configOnly: true
   },
   {
     id: "assigned-secret",

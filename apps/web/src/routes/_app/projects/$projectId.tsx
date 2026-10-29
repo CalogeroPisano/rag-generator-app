@@ -34,7 +34,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { reanalyze } from "@/functions/analysis.functions"
-import { getProject, listFiles, retryJob } from "@/functions/projects.functions"
+import { getProject, listFiles, retryJob, stopJob } from "@/functions/projects.functions"
 import { getAiStatus, startUnderstanding } from "@/functions/understanding.functions"
 import { useJobStream } from "@/hooks/use-job-stream"
 import { formatDateTime } from "@/lib/format"
@@ -138,6 +138,15 @@ function ProjectPage() {
     onError: (error) => toast.error(error.message)
   })
 
+  const stop = useMutation({
+    mutationFn: (jobId: string) => stopJob({ data: { jobId } }),
+    onSuccess: () => {
+      toast.info("Operazione interrotta")
+      void queryClient.invalidateQueries()
+    },
+    onError: (error) => toast.error(error.message)
+  })
+
   const startAnalysis = useMutation({
     mutationFn: (snapshotId: string) => reanalyze({ data: { snapshotId } }),
     onSuccess: () => {
@@ -236,7 +245,13 @@ function ProjectPage() {
       )}
 
       {job !== null && job.status !== "succeeded" && (
-        <JobProgress stream={stream} onRetry={() => retry.mutate(job.id)} retrying={retry.isPending} />
+        <JobProgress
+          stream={stream}
+          onRetry={() => retry.mutate(job.id)}
+          retrying={retry.isPending}
+          onCancel={() => stop.mutate(job.id)}
+          cancelling={stop.isPending}
+        />
       )}
 
       {readySnapshot !== null && (

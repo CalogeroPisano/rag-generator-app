@@ -34,18 +34,31 @@ export const JobRepositoryLive = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database
 
-    /** Runs an update on the job and records the matching event in one transaction. */
+    /**
+     * Runs an update on the job and records the matching event in one transaction. With `attempt`, only the run
+     * that holds that claim may change the job (fencing): a run whose job was requeued, cancelled or claimed again
+     * changes nothing.
+     */
     const transition = (
       operation: string,
       id: JobId,
       kind: JobEventKind,
       values: PgUpdateSetSource<typeof job>,
-      details: { phase?: string | null; message?: string | null; progress?: JobProgress | null } = {}
+      details: { phase?: string | null; message?: string | null; progress?: JobProgress | null } = {},
+      attempt?: number
     ) =>
       query(operation, () =>
         db.transaction(async (tx) => {
-          await tx.update(job).set(values).where(eq(job.id, id))
-          await appendJobEvent(tx, id, kind, details)
+          const updated = await tx
+            .update(job)
+            .set(values)
+            .where(
+              attempt === undefined
+                ? eq(job.id, id)
+                : and(eq(job.id, id), eq(job.status, "running"), eq(job.attempts, attempt))
+            )
+            .returning({ id: job.id })
+          if (updated.length > 0) await appendJobEvent(tx, id, kind, details)
         })
       )
 
@@ -128,13 +141,16 @@ export const JobRepositoryLive = Layer.effect(
         )
       }),
 
-      heartbeat: (id, workerId) =>
+      heartbeat: (id, workerId, attempt) =>
         query("job.heartbeat", () =>
           db
             .update(job)
             .set({ heartbeatAt: new Date() })
-            .where(and(eq(job.id, id), eq(job.lockedBy, workerId), eq(job.status, "running")))
-        ).pipe(Effect.asVoid),
+            .where(
+              and(eq(job.id, id), eq(job.lockedBy, workerId), eq(job.status, "running"), eq(job.attempts, attempt))
+            )
+            .returning({ id: job.id })
+        ).pipe(Effect.map((rows) => rows.length > 0)),
 
       startPhase: (id, phase) =>
         transition("job.startPhase", id, "phase_started", { currentPhase: phase, progress: null }, { phase }),
@@ -154,43 +170,61 @@ export const JobRepositoryLive = Layer.effect(
       reportProgress: (id, progress) =>
         transition("job.reportProgress", id, "progress", { progress }, { phase: progress.phase, progress }),
 
-      succeed: (id) =>
-        transition("job.succeed", id, "succeeded", {
-          status: "succeeded",
-          currentPhase: null,
-          lockedBy: null,
-          lastError: null,
-          finishedAt: new Date()
-        }),
+      succeed: (id, attempt) =>
+        transition(
+          "job.succeed",
+          id,
+          "succeeded",
+          { status: "succeeded", currentPhase: null, lockedBy: null, lastError: null, finishedAt: new Date() },
+          {},
+          attempt
+        ),
 
-      fail: (id, message) =>
+      fail: (id, message, attempt) =>
         transition(
           "job.fail",
           id,
           "failed",
           { status: "failed", lockedBy: null, lastError: message, finishedAt: new Date() },
-          { message }
+          { message },
+          attempt
         ),
 
-      scheduleRetry: (id, message, runAfter) =>
+      scheduleRetry: (id, message, runAfter, attempt) =>
         transition(
           "job.scheduleRetry",
           id,
           "retry_scheduled",
           { status: "queued", lockedBy: null, lastError: message, runAfter },
-          { message: `${message} — nuovo tentativo alle ${runAfter.toISOString()}` }
+          { message: `${message} — nuovo tentativo alle ${runAfter.toISOString()}` },
+          attempt
         ),
 
-      release: (id) =>
+      release: (id, attempt) =>
         transition(
           "job.release",
           id,
           "queued",
           { status: "queued", lockedBy: null, attempts: sql`greatest(${job.attempts} - 1, 0)`, runAfter: new Date() },
-          { message: "Worker arrestato: job rimesso in coda" }
+          { message: "Worker arrestato: job rimesso in coda" },
+          attempt
         ),
 
-      requeueStale: (heartbeatBefore) =>
+      cancel: Effect.fnUntraced(function* (id) {
+        const current = yield* get(id)
+        if (current.status !== "queued" && current.status !== "running") return { job: current, cancelled: false }
+        // A running job is stopped by its worker at the next heartbeat (it no longer owns it).
+        yield* transition(
+          "job.cancel",
+          id,
+          "cancelled",
+          { status: "cancelled", lockedBy: null, finishedAt: new Date() },
+          { message: "Interrotto dall'utente" }
+        )
+        return { job: yield* get(id), cancelled: true }
+      }),
+
+      requeueStale: (heartbeatBefore, exceptWorkerId) =>
         query("job.requeueStale", () =>
           db.transaction(async (tx) => {
             const stale = await tx.execute<{ id: string; status: string }>(sql`
@@ -200,6 +234,7 @@ export const JobRepositoryLive = Layer.effect(
                   finished_at = case when attempts >= max_attempts then now() else null end,
                   locked_by = null, updated_at = now()
               where status = 'running' and heartbeat_at < ${heartbeatBefore.toISOString()}::timestamptz
+                and (${exceptWorkerId ?? null}::text is null or locked_by is distinct from ${exceptWorkerId ?? null}::text)
               returning id, status`)
             for (const row of stale.rows) {
               await appendJobEvent(tx, row.id, row.status === "failed" ? "failed" : "queued", {

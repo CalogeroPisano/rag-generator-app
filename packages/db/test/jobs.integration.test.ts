@@ -124,6 +124,55 @@ describe.skipIf(url === undefined)("repositories (PostgreSQL)", () => {
     )
   })
 
+  it("does not requeue the jobs of the calling worker", async () => {
+    await run(createProject())
+    const job = Option.getOrThrow(await run(claim("worker-a")))
+    const later = new Date(Date.now() + 1000)
+    expect(await run(JobRepository.use((jobs) => jobs.requeueStale(later, "worker-a")))).toBe(0)
+    expect(await run(JobRepository.use((jobs) => jobs.requeueStale(later, "worker-b")))).toBe(1)
+    expect((await run(JobRepository.use((jobs) => jobs.get(job.id)))).status).toBe("queued")
+  })
+
+  it("fences a run that lost its job: heartbeat false, its transitions change nothing", async () => {
+    await run(createProject())
+    const first = Option.getOrThrow(await run(claim("worker-a")))
+    expect(await run(JobRepository.use((jobs) => jobs.heartbeat(first.id, "worker-a", first.attempts)))).toBe(true)
+    // Considered abandoned and claimed again by the same worker: a second run (attempt 2).
+    await run(JobRepository.use((jobs) => jobs.requeueStale(new Date(Date.now() + 1000))))
+    const second = Option.getOrThrow(await run(claim("worker-a")))
+    expect(second.attempts).toBe(first.attempts + 1)
+    expect(await run(JobRepository.use((jobs) => jobs.heartbeat(first.id, "worker-a", first.attempts)))).toBe(false)
+    expect(await run(JobRepository.use((jobs) => jobs.heartbeat(second.id, "worker-a", second.attempts)))).toBe(true)
+    // The old run is interrupted: its release (and success or failure) must not touch the new run.
+    await run(JobRepository.use((jobs) => jobs.release(first.id, first.attempts)))
+    await run(JobRepository.use((jobs) => jobs.succeed(first.id, first.attempts)))
+    const current = await run(JobRepository.use((jobs) => jobs.get(first.id)))
+    expect(current).toMatchObject({ status: "running", attempts: second.attempts })
+    await run(JobRepository.use((jobs) => jobs.succeed(second.id, second.attempts)))
+    expect((await run(JobRepository.use((jobs) => jobs.get(first.id)))).status).toBe("succeeded")
+  })
+
+  it("cancels queued and running jobs, not finished ones", async () => {
+    const queued = await run(createProject())
+    const cancelledQueued = await run(JobRepository.use((jobs) => jobs.cancel(queued.latestJob!.id)))
+    expect(cancelledQueued).toMatchObject({ cancelled: true, job: { status: "cancelled" } })
+    expect(Option.isNone(await run(claim()))).toBe(true)
+
+    await run(createProject())
+    const running = Option.getOrThrow(await run(claim("worker-a")))
+    const stopped = await run(JobRepository.use((jobs) => jobs.cancel(running.id)))
+    expect(stopped.job.status).toBe("cancelled")
+    // Its worker finds out at the next heartbeat; a late release does not requeue it.
+    expect(await run(JobRepository.use((jobs) => jobs.heartbeat(running.id, "worker-a", running.attempts)))).toBe(false)
+    await run(JobRepository.use((jobs) => jobs.release(running.id, running.attempts)))
+    expect((await run(JobRepository.use((jobs) => jobs.get(running.id)))).status).toBe("cancelled")
+    const events = await run(JobRepository.use((jobs) => jobs.eventsAfter(running.id, 0)))
+    expect(events.at(-1)).toMatchObject({ kind: "cancelled", message: "Interrotto dall'utente" })
+    // Already over: nothing to cancel. "Riprendi" queues it again.
+    expect((await run(JobRepository.use((jobs) => jobs.cancel(running.id)))).cancelled).toBe(false)
+    expect((await run(JobRepository.use((jobs) => jobs.retry(running.id)))).status).toBe("queued")
+  })
+
   it("retries a failed job manually from the failed phase", async () => {
     await run(createProject())
     const job = Option.getOrThrow(await run(claim()))

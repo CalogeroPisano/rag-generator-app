@@ -43,12 +43,12 @@ const failJob = Effect.fnUntraced(function* <R>(pipeline: Pipeline<R>, job: Job,
   const message = `${error.phase}: ${error.message}`
   if (error.retryable && job.attempts < job.maxAttempts) {
     const runAfter = new Date(Date.now() + Duration.toMillis(retryDelay(job.attempts)))
-    yield* jobs.scheduleRetry(job.id, message, runAfter)
+    yield* jobs.scheduleRetry(job.id, message, runAfter, job.attempts)
     yield* Effect.logWarning("Job phase failed, retry scheduled").pipe(
       Effect.annotateLogs({ jobId: job.id, phase: error.phase, attempt: job.attempts })
     )
   } else {
-    yield* jobs.fail(job.id, message)
+    yield* jobs.fail(job.id, message, job.attempts)
     yield* pipeline.onFailed(job)
     yield* Effect.logError("Job failed").pipe(Effect.annotateLogs({ jobId: job.id, phase: error.phase }))
   }
@@ -72,7 +72,7 @@ export const runJob = Effect.fn("runJob")(function* <R>(pipeline: Pipeline<R>, j
         .pipe(Effect.withSpan(`phase.${phase.name}`), Effect.annotateLogs({ jobId: job.id, phase: phase.name }))
       yield* jobs.completePhase(job.id, phase.name)
     }
-    yield* jobs.succeed(job.id)
+    yield* jobs.succeed(job.id, job.attempts)
   })
 
   yield* execute.pipe(
@@ -96,7 +96,8 @@ export const runJob = Effect.fn("runJob")(function* <R>(pipeline: Pipeline<R>, j
             )
           )
     ),
-    // Worker shutdown: give the job back without consuming the attempt.
-    Effect.onInterrupt(() => jobs.release(job.id).pipe(Effect.ignore))
+    // Worker shutdown: give the job back without consuming the attempt. A run stopped because it lost the job
+    // (cancelled, requeued) changes nothing: the release is fenced by its attempt.
+    Effect.onInterrupt(() => jobs.release(job.id, job.attempts).pipe(Effect.ignore))
   )
 })

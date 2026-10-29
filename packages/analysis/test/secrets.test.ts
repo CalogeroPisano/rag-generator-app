@@ -70,6 +70,36 @@ describe("maskSecrets", () => {
     expect(maskSecrets(`spring.datasource.password=hunter2hunter2`, "ini").text).not.toContain("hunter2")
   })
 
+  it("masks any literal assigned to a password key, even short or simple ones", () => {
+    const source = [
+      `this.state = { loginSuccess: false, username: 'calogero', password: 'test' };`,
+      `const adminPwd = "admin1"`,
+      `user.Passphrase = "abc";`
+    ].join("\n")
+    const result = maskSecrets(source, "javascript")
+    expect(result.text.split("\n")[0]).toBe(
+      `this.state = { loginSuccess: false, username: 'calogero', password: '[REDACTED:assigned-password]' };`
+    )
+    expect(result.text).not.toContain("admin1")
+    expect(result.text).not.toContain(`"abc"`)
+    expect(result.findings).toEqual([
+      { rule: "assigned-password", line: 1 },
+      { rule: "assigned-password", line: 2 },
+      { rule: "assigned-password", line: 3 }
+    ])
+    // Unquoted in configuration files.
+    expect(maskSecrets(`DB_PASSWORD=test`, "plaintext").text).toBe(`DB_PASSWORD=[REDACTED:assigned-password]`)
+    // Messages, references, masks and empty values stay readable.
+    const harmless = [
+      `const password = ""`,
+      `const passwordHint = "Almeno 8 caratteri"`,
+      `password: "\${DB_PASSWORD}",`,
+      `password: "****",`,
+      `passwordType: "string",`
+    ].join("\n")
+    expect(maskSecrets(harmless, "typescript").text).toBe(harmless)
+  })
+
   it("masks credentials inside connection strings but keeps the rest", () => {
     const result = maskSecrets(`url = "postgres://app:s3cr3tPass@db.internal:5432/app"`)
     expect(result.text).toBe(`url = "postgres://app:[REDACTED:url-credentials]@db.internal:5432/app"`)

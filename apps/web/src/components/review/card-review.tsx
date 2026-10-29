@@ -21,8 +21,8 @@ const verdictStyle: Record<
   { label: string; variant: "success" | "warning" | "destructive"; icon: ReactNode }
 > = {
   supported: { label: "Confermata", variant: "success", icon: <CircleCheckIcon data-icon="inline-start" /> },
-  partial: { label: "Parziale", variant: "warning", icon: <CircleHelpIcon data-icon="inline-start" /> },
-  unsupported: { label: "Non supportata", variant: "destructive", icon: <CircleXIcon data-icon="inline-start" /> }
+  partial: { label: "Conferma parziale", variant: "warning", icon: <CircleHelpIcon data-icon="inline-start" /> },
+  unsupported: { label: "Non confermata", variant: "destructive", icon: <CircleXIcon data-icon="inline-start" /> }
 }
 
 function VerdictBadge({ verdict }: { verdict: Verdict | undefined }) {

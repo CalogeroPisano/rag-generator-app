@@ -173,17 +173,27 @@ export class JobRepository extends Context.Service<
     active(projectId: ProjectId): Effect.Effect<ReadonlyArray<Job>, DatabaseError>
     /** Atomically takes the oldest runnable job (`FOR UPDATE SKIP LOCKED`). */
     claim(workerId: string): Effect.Effect<Option.Option<Job>, DatabaseError>
-    heartbeat(id: JobId, workerId: string): Effect.Effect<void, DatabaseError>
+    /**
+     * Refreshes the heartbeat of a run. `attempt` is the claim of that run (the attempt count it got): false when the
+     * job is no longer that run's (requeued, cancelled, claimed again), and the run must stop.
+     */
+    heartbeat(id: JobId, workerId: string, attempt: number): Effect.Effect<boolean, DatabaseError>
     startPhase(id: JobId, phase: string): Effect.Effect<void, DatabaseError>
     completePhase(id: JobId, phase: string): Effect.Effect<void, DatabaseError>
     reportProgress(id: JobId, progress: JobProgress): Effect.Effect<void, DatabaseError>
-    succeed(id: JobId): Effect.Effect<void, DatabaseError>
-    fail(id: JobId, message: string): Effect.Effect<void, DatabaseError>
-    scheduleRetry(id: JobId, message: string, runAfter: Date): Effect.Effect<void, DatabaseError>
+    // With `attempt`, the transition applies only while that run still holds the job (see `heartbeat`).
+    succeed(id: JobId, attempt?: number): Effect.Effect<void, DatabaseError>
+    fail(id: JobId, message: string, attempt?: number): Effect.Effect<void, DatabaseError>
+    scheduleRetry(id: JobId, message: string, runAfter: Date, attempt?: number): Effect.Effect<void, DatabaseError>
     /** Gives a running job back to the queue (worker shutdown), without consuming an attempt. */
-    release(id: JobId): Effect.Effect<void, DatabaseError>
-    /** Requeues running jobs whose worker stopped sending heartbeats. */
-    requeueStale(heartbeatBefore: Date): Effect.Effect<number, DatabaseError>
+    release(id: JobId, attempt?: number): Effect.Effect<void, DatabaseError>
+    /** Stops a queued or running job (user action); `cancelled` is false when it had already ended. */
+    cancel(id: JobId): Effect.Effect<{ readonly job: Job; readonly cancelled: boolean }, NotFoundError | DatabaseError>
+    /**
+     * Requeues running jobs whose worker stopped sending heartbeats. Jobs of `exceptWorkerId` (the caller) are
+     * skipped: its process is alive, so its jobs are not abandoned.
+     */
+    requeueStale(heartbeatBefore: Date, exceptWorkerId?: string): Effect.Effect<number, DatabaseError>
     /** Manual retry of a failed job: it resumes from the failed phase. */
     retry(id: JobId): Effect.Effect<Job, NotFoundError | DatabaseError>
     get(id: JobId): Effect.Effect<Job, NotFoundError | DatabaseError>

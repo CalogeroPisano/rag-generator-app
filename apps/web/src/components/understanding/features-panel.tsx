@@ -62,7 +62,7 @@ export function FeaturesPanel({
         </Card>
       )}
       <div className="grid gap-4 lg:grid-cols-[minmax(260px,340px)_1fr]">
-        <Card className="py-0">
+        <Card className="min-w-0 py-0">
           <ScrollArea className="max-h-[75vh]">
             <ul className="flex flex-col p-2">
               {features.map((feature) => (
@@ -71,25 +71,27 @@ export function FeaturesPanel({
                     type="button"
                     onClick={() => setSelectedId(feature.id)}
                     className={cn(
-                      "flex w-full flex-col gap-1 rounded-md px-3 py-2 text-left hover:bg-muted",
+                      "flex w-full min-w-0 flex-col gap-1 rounded-md px-3 py-2 text-left hover:bg-muted",
                       feature.id === selected.id && "bg-muted"
                     )}
                   >
-                    <span className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{feature.name}</span>
+                    <span className="flex min-w-0 items-start gap-2">
+                      <span className="min-w-0 flex-1 text-sm font-medium break-words">{feature.name}</span>
                       {feature.card === null ? (
                         <Badge variant="secondary">Senza scheda</Badge>
                       ) : (
-                        <>
+                        <span className="flex shrink-0 flex-wrap justify-end gap-1">
                           {feature.card.issues !== null && feature.card.issues > 0 && (
                             <Badge variant="warning">{feature.card.issues}</Badge>
                           )}
                           <CardChangeBadge change={feature.card.change} />
                           <CardStatusBadge status={feature.card.status} />
-                        </>
+                        </span>
                       )}
                     </span>
-                    <span className="line-clamp-2 text-xs text-muted-foreground">{feature.description}</span>
+                    <span className="line-clamp-2 text-xs break-words text-muted-foreground">
+                      {feature.description}
+                    </span>
                   </button>
                 </li>
               ))}

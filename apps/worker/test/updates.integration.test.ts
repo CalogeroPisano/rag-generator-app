@@ -9,6 +9,7 @@ import {
   acquisitionPipeline,
   analysisPipeline,
   AppConfig,
+  cancelJob,
   CARD_CHUNK,
   CodeAnalyzer,
   createProject,
@@ -352,6 +353,29 @@ describe.skipIf(url === undefined)("Incremental updates (PostgreSQL)", () => {
     )
     expect(rag.rows.map((row) => row.id)).toEqual([v2, v3])
     expect(rag.rows.map((row) => row.id)).not.toContain(v1)
+  })
+
+  it("stops an update on request: the version in use stays and review is possible again", async () => {
+    const { projectId, snapshotId: v1 } = await firstVersion()
+    const queued = await run(requestNewVersion(projectId, await upload(version2())))
+    const v2 = queued.latestSnapshot!.id
+    expect((await runClaimed()).type).toBe("acquisition")
+    expect((await runClaimed()).type).toBe("analysis")
+    const update = (await run(JobRepository.use((jobs) => jobs.active(projectId))))[0]!
+    expect(update).toMatchObject({ type: "understanding", status: "queued" })
+
+    const stopped = await run(cancelJob(update.id))
+    expect(stopped.status).toBe("cancelled")
+    expect((await run(SnapshotRepository.use((s) => s.get(v2)))).snapshot.understandingStatus).toBe("failed")
+    expect((await project(projectId)).currentSnapshot?.id).toBe(v1)
+    expect(await drain()).toEqual([])
+    // No job left on the new version: the version in use can be reviewed again.
+    await run(setCardStatus(v1, (await byName(v1)).get("Orders")!.card!.id, "excluded", reviewer))
+
+    // "Riprendi" resumes the update, which then completes.
+    await run(JobRepository.use((jobs) => jobs.retry(update.id)))
+    expect((await runClaimed()).status).toBe("succeeded")
+    expect((await project(projectId)).currentSnapshot?.id).toBe(v2)
   })
 
   it("makes a new version current at once when the version in use has no cards", async () => {
