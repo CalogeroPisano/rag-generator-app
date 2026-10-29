@@ -239,6 +239,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
 
   packages/db:
     dependencies:

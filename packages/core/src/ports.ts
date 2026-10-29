@@ -4,7 +4,7 @@
  */
 import type { CodeSymbol, DependencyTarget, PreparedFile, RawImport, ResolverInput } from "@code-to-rag/analysis"
 import type { CardContent } from "@code-to-rag/ai"
-import { Context, type Effect, type Option } from "effect"
+import { Context, type Effect, type Option, type Scope } from "effect"
 import type {
   AnalysisStatus,
   CardStatus,
@@ -665,3 +665,72 @@ export class ChatRepository extends Context.Service<
     deleteConversation(conversationId: string, userId: UserId): Effect.Effect<void, NotFoundError | DatabaseError>
   }
 >()("code-to-rag/core/ChatRepository") {}
+
+/** Tables of the `rag` schema, in dependency order (referenced tables first). */
+export const EXPORT_TABLES = [
+  "snapshot",
+  "file_summary",
+  "symbol_summary",
+  "module_summary",
+  "feature",
+  "card",
+  "card_reference",
+  "card_verification",
+  "correction",
+  "chunk",
+  "test_question",
+  "test_run",
+  "test_result"
+] as const
+export type ExportTable = (typeof EXPORT_TABLES)[number]
+
+/** What an export covers: the current version of a project, every card except excluded ones or approved ones only. */
+export interface ExportScope {
+  readonly projectId: ProjectId
+  readonly snapshotId: SnapshotId
+  readonly approvedOnly: boolean
+}
+
+/** An exported column with its Postgres type (`format_type`: `text`, `jsonb`, `text[]`, `vector`…). */
+export interface ExportColumn {
+  readonly name: string
+  readonly type: string
+}
+
+export interface ExportEmbedding {
+  readonly model: string
+  readonly dimensions: number
+  readonly formatVersion: number
+  readonly chunks: number
+}
+
+/**
+ * Reads the rows in scope of every `rag` table inside one read-only transaction, so that the files of an export
+ * are consistent with each other. Rows are plain JSON objects keyed by column name (vectors as arrays of numbers,
+ * timestamps as ISO strings in UTC); serial ids and generated columns are left out.
+ */
+export interface ExportReader {
+  /** `CREATE … IF NOT EXISTS` statements recreating the `rag` schema as it is in this database. */
+  readonly schemaStatements: Effect.Effect<ReadonlyArray<string>, DatabaseError>
+  columns(table: ExportTable): Effect.Effect<ReadonlyArray<ExportColumn>, DatabaseError>
+  count(table: ExportTable): Effect.Effect<number, DatabaseError>
+  /** Rows after the `after` cursor (null: from the start), in a stable order. `next` is null after the last page. */
+  page(
+    table: ExportTable,
+    after: string | number | null,
+    limit: number
+  ): Effect.Effect<
+    { readonly rows: ReadonlyArray<Record<string, unknown>>; readonly next: string | number | null },
+    DatabaseError
+  >
+  readonly embeddings: Effect.Effect<ReadonlyArray<ExportEmbedding>, DatabaseError>
+}
+
+/** Knowledge export (phase 7). */
+export class ExportRepository extends Context.Service<
+  ExportRepository,
+  {
+    /** Opens the transaction of an export; it ends with the scope. */
+    open(scope: ExportScope): Effect.Effect<ExportReader, DatabaseError, Scope.Scope>
+  }
+>()("code-to-rag/core/ExportRepository") {}

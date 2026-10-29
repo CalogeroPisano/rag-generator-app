@@ -45,7 +45,8 @@ packages/ai     AI layer: LanguageModel (structured + streamed text) and Embeddi
 
 Dependency direction: `analysis`, `ai` ← `core` ← `db` ← apps. `core` defines the repository **ports**
 (`ProjectRepository`, `SnapshotRepository`, `JobRepository`, `AnalysisRepository`, `UnderstandingRepository`,
-`KnowledgeRepository`, `IndexRepository`, `EvaluationRepository`, `ChatRepository` in `core/src/ports.ts`;
+`KnowledgeRepository`, `IndexRepository`, `EvaluationRepository`, `ChatRepository`, `ExportRepository` in
+`core/src/ports.ts`;
 `ModelCallRecorder` in `ai`); `db` implements them. Never import `db` from `core`.
 
 ### Data flow (phase 1)
@@ -145,6 +146,25 @@ kept`), updates from the previous card (`changedFiles` in the CARD prompt, `base
 4. `ensureNotUpdating` (any active job on a non-current snapshot) guards review, corrections, "Rigenera schede",
    question generation and test runs. Test runs are listed per project (all kept versions, with revision).
 
+### Data flow (phase 7: knowledge export)
+
+1. "Esporta" dialog → `getExportPreview` (`prepareExport` + `exportPreview`: rows per table, embedding models), then a
+   plain download of `GET /api/projects/$projectId/export?format=jsonl|sql&approvedOnly=…` (server route, session
+   check). No job, no file on disk; export only (no import: user's choice).
+2. `prepareExport` (`core/src/export/export.ts`): current version with understanding ready, no understanding/card job
+   on it (indexing → warning). `writeExport` opens `ExportRepository.open(scope)` (one pooled connection, `REPEATABLE
+READ READ ONLY`, UTC, rolled back with the scope) and pages every table of `EXPORT_TABLES` (dependency order) by key;
+   the route's `ReadableStream` waits for `pull` when its queue is full.
+3. Scope (`db/src/export-repository.ts`, `inScope`): cards not excluded or approved only; features, references,
+   verifications, chunks (current card version), corrections and test questions follow the cards; test runs over
+   approved cards only when approved only. Rows are `to_jsonb` minus serial ids and generated columns.
+4. Formats (`core/src/export/format.ts`, `EXPORT_FORMAT_VERSION`): zip (fflate `Zip`/`ZipDeflate`, synchronous) with
+   `manifest.json` + `<table>.jsonl`; SQL script with DDL read from the catalog (`schemaStatements`: `CREATE … IF NOT
+EXISTS`, serial → `bigserial`), deletion of the project's rows, multi-row INSERTs with typed literals
+   (`sqlLiteral`), header comments stripped of control characters (`commentText`). Any new `rag` table must be added to
+   `EXPORT_TABLES` and `inScope` (the export fails on unknown tables; the integration test compares the recreated
+   catalog with the migrated one).
+
 ### Jobs and phases
 
 - A phase has a stable `name`, takes only the job, is **idempotent** (clears/overwrites what a previous attempt
@@ -242,6 +262,9 @@ of every new dependency before adding it.
 - Phase 6 (user's choices): new versions started manually ("Nuova versione"), the card update follows automatically;
   changed cards are updated from the previous ones and reviewed ones return to `needs_recheck`, unchanged ones are
   copied with their review; incremental feature map; the last `SNAPSHOT_RETENTION` (3) versions are kept.
+- Phase 7 (user's choices): export only, no import; everything of the version in use including embeddings; scope
+  chosen at every export (all but excluded / approved only); SQL with the same `rag` schema (re-runnable, replaces the
+  project's rows); direct streamed download, no job.
 
 ## Status
 
@@ -252,6 +275,6 @@ of every new dependency before adding it.
 - Phase 5 (embedding index in pgvector, RAG chat with citations, test questions; no 5-minute time-to-first-token
   limit): implemented.
 - Phase 6 (incremental updates on new versions of the code): implemented.
-- Next: phase 7 (per-project knowledge export and import).
-- Roadmap (user's order): 5 embeddings, RAG chat, test questions → 6 incremental updates → 7 per-project knowledge export (JSONL
-  archive + manifest, and SQL for another Postgres; import), last.
+- Phase 7 (per-project knowledge export: JSONL archive + manifest, SQL script for another Postgres; no import, user's
+  choice): implemented.
+- All planned phases are implemented.

@@ -21,6 +21,7 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AppProjectsProjectIdChatRouteImport } from './routes/_app/projects/$projectId_.chat'
 import { Route as AppProjectsProjectIdTestsRouteImport } from './routes/_app/projects/$projectId_.tests'
 import { Route as ApiJobsJobIdEventsRouteImport } from './routes/api/jobs/$jobId/events'
+import { Route as ApiProjectsProjectIdExportRouteImport } from './routes/api/projects/$projectId/export'
 import { Route as AppProjectsProjectIdCardsFeatureIdRouteImport } from './routes/_app/projects/$projectId_.cards.$featureId'
 
 const AppRoute = AppRouteImport.update({
@@ -84,6 +85,12 @@ const ApiJobsJobIdEventsRoute = ApiJobsJobIdEventsRouteImport.update({
   path: '/api/jobs/$jobId/events',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiProjectsProjectIdExportRoute =
+  ApiProjectsProjectIdExportRouteImport.update({
+    id: '/api/projects/$projectId/export',
+    path: '/api/projects/$projectId/export',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AppProjectsProjectIdCardsFeatureIdRoute =
   AppProjectsProjectIdCardsFeatureIdRouteImport.update({
     id: '/projects/$projectId_/cards/$featureId',
@@ -103,6 +110,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/chat': typeof AppProjectsProjectIdChatRoute
   '/projects/$projectId/tests': typeof AppProjectsProjectIdTestsRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
+  '/api/projects/$projectId/export': typeof ApiProjectsProjectIdExportRoute
   '/projects/$projectId/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRoutesByTo {
@@ -117,6 +125,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/chat': typeof AppProjectsProjectIdChatRoute
   '/projects/$projectId/tests': typeof AppProjectsProjectIdTestsRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
+  '/api/projects/$projectId/export': typeof ApiProjectsProjectIdExportRoute
   '/projects/$projectId/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRoutesById {
@@ -133,6 +142,7 @@ export interface FileRoutesById {
   '/_app/projects/$projectId_/chat': typeof AppProjectsProjectIdChatRoute
   '/_app/projects/$projectId_/tests': typeof AppProjectsProjectIdTestsRoute
   '/api/jobs/$jobId/events': typeof ApiJobsJobIdEventsRoute
+  '/api/projects/$projectId/export': typeof ApiProjectsProjectIdExportRoute
   '/_app/projects/$projectId_/cards/$featureId': typeof AppProjectsProjectIdCardsFeatureIdRoute
 }
 export interface FileRouteTypes {
@@ -149,6 +159,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/chat'
     | '/projects/$projectId/tests'
     | '/api/jobs/$jobId/events'
+    | '/api/projects/$projectId/export'
     | '/projects/$projectId/cards/$featureId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -163,6 +174,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/chat'
     | '/projects/$projectId/tests'
     | '/api/jobs/$jobId/events'
+    | '/api/projects/$projectId/export'
     | '/projects/$projectId/cards/$featureId'
   id:
     | '__root__'
@@ -178,6 +190,7 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId_/chat'
     | '/_app/projects/$projectId_/tests'
     | '/api/jobs/$jobId/events'
+    | '/api/projects/$projectId/export'
     | '/_app/projects/$projectId_/cards/$featureId'
   fileRoutesById: FileRoutesById
 }
@@ -188,6 +201,7 @@ export interface RootRouteChildren {
   ApiUploadsRoute: typeof ApiUploadsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiJobsJobIdEventsRoute: typeof ApiJobsJobIdEventsRoute
+  ApiProjectsProjectIdExportRoute: typeof ApiProjectsProjectIdExportRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -276,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiJobsJobIdEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/projects/$projectId/export': {
+      id: '/api/projects/$projectId/export'
+      path: '/api/projects/$projectId/export'
+      fullPath: '/api/projects/$projectId/export'
+      preLoaderRoute: typeof ApiProjectsProjectIdExportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/projects/$projectId_/cards/$featureId': {
       id: '/_app/projects/$projectId_/cards/$featureId'
       path: '/projects/$projectId/cards/$featureId'
@@ -316,6 +337,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiUploadsRoute: ApiUploadsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiJobsJobIdEventsRoute: ApiJobsJobIdEventsRoute,
+  ApiProjectsProjectIdExportRoute: ApiProjectsProjectIdExportRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

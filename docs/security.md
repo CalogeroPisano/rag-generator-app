@@ -48,6 +48,20 @@ comments are therefore extracted from already-masked text. Parsing logs record c
   `rag`), never in `model_call` or in the logs.
 - `EMBEDDING_API_KEY` is redacted like `AI_API_KEY`; the web app only exposes the names of the configured models.
 
+## Knowledge export
+
+- Any authenticated user can export a project (there are no roles yet); the download route checks the session.
+- The export contains the `rag` data of the version in use: summaries, cards (with paths and line numbers of their
+  references), verifications, the embedding index, corrections and test questions with the **names of their authors**
+  (and the reviewer of each card), test runs with the chat answers. It never contains source code, masked or not.
+- The SQL script is built from values, never from SQL text found in the data: identifiers are quoted, strings are
+  literals for `standard_conforming_strings = on` (set by the script itself), numbers and vectors are checked to be
+  finite numbers, and the project name and revision in the header comments lose their line breaks and control
+  characters (they would otherwise end the comment and become SQL).
+- Running the script needs the right to create the `vector` extension and the `rag` schema in the target database;
+  it deletes the target's rows of the same project id before inserting (other projects are not touched).
+- Files are streamed: nothing is written on the server's disk. The export reads from a read-only transaction.
+
 ## Deletion
 
 Deleting a project removes its masked code, analysis, knowledge (`rag` schema: corrections, embedding index, test

@@ -426,6 +426,52 @@ flowchart LR
   update) are kept until a later version becomes current.
 - The **Versioni** tab lists the kept versions with their state (in use, previous, updating, failed) and changes.
 
+## Knowledge export
+
+"Esporta" on the project page (once the cards are generated) opens a dialog: format, scope and a preview of what the
+file will contain (rows per table, embedding models).
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant W as Web
+  participant DB as PostgreSQL
+  B->>W: getExportPreview(projectId, approvedOnly)
+  W->>DB: prepareExport (current version, active jobs) + counts
+  W-->>B: rows per table, embeddings, file name
+  B->>W: GET /api/projects/:id/export?format=jsonl|sql&approvedOnly=…
+  W->>DB: prepareExport, then BEGIN REPEATABLE READ READ ONLY
+  loop every rag table, pages of 500 rows (50 chunks)
+    W->>DB: rows in scope after the last key
+    W-->>B: JSONL lines (zip entry) or one INSERT
+  end
+  W->>DB: ROLLBACK (read-only)
+```
+
+- **What**: the version in use (`project.current_snapshot_id`): `rag.snapshot`, file, symbol and module summaries,
+  features, cards, references, verifications, corrections, chunks (embeddings of the current card versions), test
+  questions, test runs and results. **Scope**: every card except excluded ones (with their status) or approved ones
+  only; features, references, verifications, chunks, corrections and test questions follow the exported cards; with
+  "approved only", only test runs over approved cards. Summaries are always exported. Serial ids and generated columns
+  (`search_vector`) are left out: the target assigns or computes them.
+- **Refused** (`prepareExport`) before the cards are generated and while they are being generated again (understanding
+  or card jobs on the current version). During an indexing job the export is allowed, with a warning (chunks of the
+  latest changes may be missing). A new version being acquired or updated does not matter: the current one does not
+  change until the update is complete.
+- **JSONL archive** (`<project>-<revision>-knowledge[-approved].zip`): `manifest.json` (format and version, project,
+  revision, language and model of the cards, scope, embedding models with dimensions, then for every table its file,
+  row count and columns with their PostgreSQL types) and `<table>.jsonl`, one JSON object per row keyed by column name
+  (vectors as arrays of numbers, timestamps in UTC).
+- **SQL script** (`….sql`): header comments, `BEGIN`, `CREATE EXTENSION IF NOT EXISTS vector`, `CREATE SCHEMA IF NOT
+EXISTS rag`, `CREATE TABLE/INDEX IF NOT EXISTS` for every `rag` table (built from the database catalog, so it matches
+  the migrations), deletion of the rows of the same project (`rag.snapshot` cascades, corrections and test questions by
+  `project_id`), multi-row `INSERT`s, `COMMIT`. It can be run again (e.g. after a newer export) with the same result.
+  A target with a `rag` schema of an older format keeps its tables: the manifest and the header carry the format
+  version (`EXPORT_FORMAT_VERSION`).
+- Both are written while they are read (`writeExport`, `core/src/export/`): pages from one repeatable-read, read-only
+  transaction (`ExportRepository`), so the files are consistent with each other; the response stream waits for the
+  client to read before reading the next page, and closing the download stops the export.
+
 ## Deleting a project
 
 "Elimina progetto" on the project page, confirmed by typing the project name. Refused while a job of the project is

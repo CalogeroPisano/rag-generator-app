@@ -396,7 +396,7 @@ erDiagram
 
 ## Tables of the next phases
 
-Phase 7 adds no tables: it exports the `rag` data of a project.
+Phase 7 adds no tables: it exports the `rag` data of a project (see [Flows](flows.md#knowledge-export)).
 
 Each version of the code has its own `rag.snapshot` with its summaries, features, cards and chunks; the copies made by
 an incremental update are full rows, so that a version can be read, exported or deleted on its own.

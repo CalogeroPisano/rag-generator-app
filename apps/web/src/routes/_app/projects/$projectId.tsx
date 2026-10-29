@@ -19,6 +19,7 @@ import { FileExplorer, type FileSelection } from "@/components/file-explorer"
 import { JobProgress } from "@/components/job-progress"
 import { PageHeader } from "@/components/page-header"
 import { DeleteProjectDialog } from "@/components/projects/delete-project-dialog"
+import { ExportDialog } from "@/components/projects/export-dialog"
 import { NewVersionDialog } from "@/components/projects/new-version-dialog"
 import { VersionsCard } from "@/components/projects/versions-card"
 import { IndexStatusCard } from "@/components/rag/index-status"
@@ -217,6 +218,12 @@ function ProjectPage() {
                   </Link>
                 </Button>
               </>
+            )}
+            {understandingReady && (
+              <ExportDialog
+                projectId={project.id}
+                disabled={jobActive && (job.type === "understanding" || job.type === "card")}
+              />
             )}
             <NewVersionDialog
               projectId={project.id}

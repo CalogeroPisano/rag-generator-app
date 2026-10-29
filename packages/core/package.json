@@ -12,6 +12,7 @@
   "dependencies": {
     "@code-to-rag/ai": "workspace:*",
     "@code-to-rag/analysis": "workspace:*",
-    "effect": "4.0.5"
+    "effect": "4.0.5",
+    "fflate": "0.8.3"
   }
 }

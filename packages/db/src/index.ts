@@ -3,6 +3,7 @@ import { AnalysisRepositoryLive } from "./analysis-repository.ts"
 import { ChatRepositoryLive } from "./chat-repository.ts"
 import { Database } from "./client.ts"
 import { EvaluationRepositoryLive } from "./evaluation-repository.ts"
+import { ExportRepositoryLive } from "./export-repository.ts"
 import { IndexRepositoryLive } from "./index-repository.ts"
 import { JobRepositoryLive } from "./job-repository.ts"
 import { KnowledgeRepositoryLive } from "./knowledge-repository.ts"
@@ -14,6 +15,7 @@ export * from "./analysis-repository.ts"
 export * from "./chat-repository.ts"
 export * from "./client.ts"
 export * from "./evaluation-repository.ts"
+export * from "./export-repository.ts"
 export * from "./index-repository.ts"
 export * from "./job-events.ts"
 export * from "./job-repository.ts"
@@ -34,7 +36,8 @@ export const RepositoriesLive = Layer.mergeAll(
   ModelCallRecorderLive,
   IndexRepositoryLive,
   EvaluationRepositoryLive,
-  ChatRepositoryLive
+  ChatRepositoryLive,
+  ExportRepositoryLive
 )
 
 /** Repositories plus the `Database` service itself (pool from `DATABASE_URL`). */

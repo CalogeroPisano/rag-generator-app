@@ -7,11 +7,11 @@ a vector database that powers a RAG chatbot.
 
 Commercially distributable product, installed **on premise** with Docker Compose.
 
-> **Status:** phases 1–6 of 7 completed (source acquisition, static analysis, AI understanding, review, RAG chat,
-> incremental updates).
+> **Status:** all 7 phases completed (source acquisition, static analysis, AI understanding, review, RAG chat,
+> incremental updates, knowledge export).
 > See [Roadmap](#roadmap).
 
-## Available features (phases 1–6)
+## Available features
 
 - **Acquisition** from a zip archive (streamed upload) or a Git repository, including private ones with a read-only
   token (stored encrypted).
@@ -49,6 +49,10 @@ Commercially distributable product, installed **on premise** with Docker Compose
   assigned to existing or new features. The previous version stays in use until the update is complete; the last
   versions are kept (`SNAPSHOT_RETENTION`), test runs of different versions can be compared, a version with no
   changes is not created.
+- **Knowledge export** ("Esporta") of the version in use: a zip archive with `manifest.json` and one JSONL file per
+  table, or a SQL script that creates the `rag` schema in another PostgreSQL (with pgvector) and replaces the
+  project's data there. Cards, features, references, verifications, corrections, test questions and runs, summaries
+  and the embedding index are included, every card except excluded ones or approved ones only; never the source code.
 - **Project deletion**, with everything it produced (knowledge base, index, tests and conversations included).
 - **Model call log**: phase, model, duration, tokens and outcome of every call, never the code.
 - **Web interface**: login, project list, new project, job progress, file tree with exclusions, code viewer
@@ -134,7 +138,7 @@ docs/         architecture and flow documentation
 4. **Automated verification and assisted review; project deletion** — completed
 5. **Indexing in pgvector, RAG chat with citations, test questions** — completed
 6. **Incremental updates on new versions of the code** — completed
-7. Per-project knowledge export (archive + SQL) and import
+7. **Per-project knowledge export** (JSONL archive with manifest, SQL script for another PostgreSQL) — completed
 
 ## Third-party licenses
 
