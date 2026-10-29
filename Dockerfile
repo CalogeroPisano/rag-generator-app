@@ -10,12 +10,13 @@ ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH CI=true
 RUN corepack enable
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY apps/web/package.json apps/web/
-COPY apps/worker/package.json apps/worker/
+COPY adapters/inbound/web/package.json adapters/inbound/web/
+COPY adapters/inbound/worker/package.json adapters/inbound/worker/
 COPY packages/core/package.json packages/core/
-COPY packages/db/package.json packages/db/
-COPY packages/ai/package.json packages/ai/
-COPY packages/analysis/package.json packages/analysis/
+COPY adapters/outbound/postgres/package.json adapters/outbound/postgres/
+COPY adapters/outbound/openai/package.json adapters/outbound/openai/
+COPY adapters/outbound/ollama/package.json adapters/outbound/ollama/
+COPY adapters/outbound/filesystem/package.json adapters/outbound/filesystem/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm --filter @code-to-rag/web build \
@@ -31,18 +32,18 @@ RUN mkdir -p /data && chown node:node /data
 USER node
 
 FROM runtime AS web
-COPY --from=build --chown=node:node /repo/apps/web/dist ./
+COPY --from=build --chown=node:node /repo/adapters/inbound/web/dist ./
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/favicon.ico').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 CMD ["node", "serve.js"]
 
 FROM runtime AS worker
-COPY --from=build --chown=node:node /repo/apps/worker/dist ./
+COPY --from=build --chown=node:node /repo/adapters/inbound/worker/dist ./
 ENV GRAMMARS_DIR=/app/grammars
 CMD ["node", "main.js"]
 
 FROM runtime AS migrate
-COPY --from=build --chown=node:node /repo/apps/worker/dist ./
-COPY --from=build --chown=node:node /repo/packages/db/migrations ./migrations
+COPY --from=build --chown=node:node /repo/adapters/inbound/worker/dist ./
+COPY --from=build --chown=node:node /repo/adapters/outbound/postgres/migrations ./migrations
 ENV MIGRATIONS_DIR=/app/migrations
 CMD ["node", "migrate.js"]

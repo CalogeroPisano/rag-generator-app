@@ -1,0 +1,17 @@
+{
+  "name": "@code-to-rag/ollama",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@code-to-rag/core": "workspace:*",
+    "effect": "4.0.5",
+    "undici": "8.12.3"
+  }
+}

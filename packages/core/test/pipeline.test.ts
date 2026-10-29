@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Duration } from "effect"
-import { retryDelay } from "../src/pipeline.ts"
+import { retryDelay } from "../src/application/pipeline.ts"
 
 describe("retryDelay", () => {
   it("backs off exponentially and is capped", () => {

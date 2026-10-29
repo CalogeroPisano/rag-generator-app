@@ -7,7 +7,7 @@ import {
   dirtyModules,
   featureAffected,
   featureChangedFiles
-} from "../src/understanding/update.ts"
+} from "../src/application/understanding/update.ts"
 
 const declaration = (path: string, qualifiedName: string) => ({
   path,

@@ -1,17 +1,21 @@
-export * from "./acquisition.ts"
-export * from "./analysis.ts"
-export * from "./code-analyzer.ts"
-export * from "./config.ts"
-export * from "./domain.ts"
-export * from "./errors.ts"
-export * from "./pipeline.ts"
-export * from "./ports.ts"
-export * from "./projects.ts"
-export * from "./secret-box.ts"
-export * from "./uploads.ts"
-export * from "./understanding/index.ts"
-export * from "./review.ts"
-export * from "./rag/index.ts"
-export * from "./updates.ts"
-export * from "./cancel.ts"
-export * from "./export/index.ts"
+/**
+ * Entry point for the inbound adapters (web, worker): the domain model and the inbound ports, one namespace per
+ * area (`Projects.createProject`, `Jobs.claimJob`…). Outbound adapters use `@code-to-rag/core/outbound`.
+ */
+export * from "./domain/model.ts"
+export * from "./domain/errors.ts"
+export * from "./domain/card.ts"
+export * from "./domain/code.ts"
+export * from "./domain/features.ts"
+export * from "./domain/source/exclusion.ts"
+export * from "./domain/source/limits.ts"
+
+export { AppConfig, type AppConfigShape } from "./application/config.ts"
+
+export * as Analysis from "./ports/inbound/analysis.ts"
+export * as Evaluation from "./ports/inbound/evaluation.ts"
+export * as Export from "./ports/inbound/export.ts"
+export * as Jobs from "./ports/inbound/jobs.ts"
+export * as Knowledge from "./ports/inbound/knowledge.ts"
+export * as Projects from "./ports/inbound/projects.ts"
+export * as Rag from "./ports/inbound/rag.ts"

@@ -1,0 +1,2 @@
+ALTER TABLE "rag"."card_verification" ADD COLUMN "missing_probability" double precision;--> statement-breakpoint
+ALTER TABLE "rag"."card_verification" ADD COLUMN "missing_suspected" boolean DEFAULT false NOT NULL;

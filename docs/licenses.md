@@ -44,6 +44,15 @@ imports but the product never uses) and `@vercel/oidc` are Apache-2.0; `zod` (a 
 Their LICENSE files ship in `third-party-licenses/`. Models are not distributed: the
 license of the model deployed on premise is the operator's responsibility.
 
+### Decision model
+
+The worker talks to the decision model over HTTP (`undici`, MIT); no model is distributed with the product. The
+default model, `d1-omni` by Liquid AI (as `d1`), is released under the **LFM Open License v1.0**: commercial use is
+licensed only to organisations with **annual revenue below 10 million US dollars** (affiliates included); above
+that threshold a commercial license from Liquid AI is needed. Redistributing the weights requires a copy of the
+license and its notices. Operators pull the model themselves (`ollama pull d1-omni`) and must check that the license
+fits them; `DECISION_MODEL` accepts any other model served through Ollama's System One API.
+
 ## Build tools
 
 Some tools used only at build time have licenses outside the list (for example lightningcss, MPL-2.0, used by

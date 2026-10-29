@@ -7,7 +7,7 @@ import {
   jsonLine,
   scriptHeader,
   sqlLiteral
-} from "../src/export/format.ts"
+} from "../src/application/export/format.ts"
 
 describe("sqlLiteral", () => {
   it("quotes strings for standard conforming strings", () => {

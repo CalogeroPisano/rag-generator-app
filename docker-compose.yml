@@ -94,6 +94,14 @@ services:
     environment:
       <<: [*app-env, *ai-env]
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      # Decision model (card verification): Ollama's System One API, without /v1.
+      DECISION_BASE_URL: ${DECISION_BASE_URL:-http://ollama:11434}
+      DECISION_MODEL: ${DECISION_MODEL:-d1-omni}
+      DECISION_TIMEOUT: ${DECISION_TIMEOUT:-2 minutes}
+      DECISION_CONTEXT_TOKENS: ${DECISION_CONTEXT_TOKENS:-12000}
+      VERIFY_SUPPORTED_THRESHOLD: ${VERIFY_SUPPORTED_THRESHOLD:-0.7}
+      VERIFY_UNSUPPORTED_THRESHOLD: ${VERIFY_UNSUPPORTED_THRESHOLD:-0.3}
+      VERIFY_MISSING_THRESHOLD: ${VERIFY_MISSING_THRESHOLD:-0.5}
     # Lets AI_BASE_URL point to an Ollama running on the host: http://host.docker.internal:11434/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"

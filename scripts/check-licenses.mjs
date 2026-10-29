@@ -4,7 +4,7 @@
  * License policy check.
  *
  * 1. Distributed code: reads the manifests written at build time by
- *    `vite-plugin-third-party.mjs` (`apps/*\/dist/third-party-licenses/*.json`),
+ *    `vite-plugin-third-party.mjs` (`adapters/inbound/*\/dist/third-party-licenses/*.json`),
  *    i.e. exactly the packages bundled into what we ship. Any license outside
  *    the policy fails the check, unless listed in `licenses.exceptions.json`.
  *    Apache-2.0 packages that ship a NOTICE must have it copied.
@@ -75,8 +75,8 @@ const isAllowed = (expression) => {
 }
 
 const manifests = fs
-  .readdirSync(path.join(root, "apps"))
-  .map((app) => path.join(root, "apps", app, "dist/third-party-licenses"))
+  .readdirSync(path.join(root, "adapters/inbound"))
+  .map((app) => path.join(root, "adapters/inbound", app, "dist/third-party-licenses"))
   .filter((dir) => fs.existsSync(dir))
   .flatMap((dir) =>
     fs

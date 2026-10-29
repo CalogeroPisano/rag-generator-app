@@ -1,13 +1,13 @@
-import type { CardContent } from "@code-to-rag/ai"
+import type { CardContent } from "../src/domain/card.ts"
 import { describe, expect, it } from "vitest"
-import { SourceFileEntry } from "../src/domain.ts"
-import type { Declaration } from "../src/ports.ts"
-import { buildCardExcerpts } from "../src/understanding/excerpts.ts"
-import { dedupeFeatures, mergeFeatures, normalizeFeatures } from "../src/understanding/features.ts"
-import { planModules } from "../src/understanding/modules.ts"
-import { splitIntoParts } from "../src/understanding/parts.ts"
-import { checkReferences } from "../src/understanding/references.ts"
-import { selectFiles } from "../src/understanding/select.ts"
+import { SourceFileEntry } from "../src/domain/model.ts"
+import type { Declaration } from "../src/ports/outbound/repositories.ts"
+import { buildCardExcerpts, citedExcerpts } from "../src/application/understanding/excerpts.ts"
+import { dedupeFeatures, mergeFeatures, normalizeFeatures } from "../src/application/understanding/features.ts"
+import { planModules } from "../src/application/understanding/modules.ts"
+import { splitIntoParts } from "../src/application/understanding/parts.ts"
+import { checkReferences } from "../src/application/understanding/references.ts"
+import { selectFiles } from "../src/application/understanding/select.ts"
 
 const entry = (path: string, language: string, extra: Partial<SourceFileEntry> = {}) =>
   new SourceFileEntry({
@@ -221,5 +221,27 @@ describe("card excerpts and references", () => {
     ])
     expect(checked.unreferencedStatements).toBe(2)
     expect(checked.content.behavior[1]?.references).toEqual([])
+  })
+
+  it("shows only the cited lines of a statement, with context, within the budget", () => {
+    const files = [file("a.ts", 100), file("b.ts", 100)]
+    const excerpts = citedExcerpts({
+      files,
+      references: [
+        { path: "a.ts", startLine: 50, endLine: 52 },
+        { path: "a.ts", startLine: 58, endLine: 60 },
+        { path: "missing.ts", startLine: 1, endLine: 2 },
+        { path: "b.ts", startLine: 1, endLine: 1 }
+      ],
+      maxTokens: 10_000
+    })
+    // Overlapping contexts merge; ranges are clamped to the file.
+    expect(excerpts.map((e) => [e.path, e.summary, e.ranges.map((r) => [r.firstLine, r.lines.length])])).toEqual([
+      ["a.ts", null, [[40, 31]]],
+      ["b.ts", null, [[1, 11]]]
+    ])
+    expect(citedExcerpts({ files, references: [{ path: "a.ts", startLine: 1, endLine: 100 }], maxTokens: 50 })).toEqual(
+      []
+    )
   })
 })

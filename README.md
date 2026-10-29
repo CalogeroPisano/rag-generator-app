@@ -31,8 +31,8 @@ Commercially distributable product, installed **on premise** with Docker Compose
   its files together. Every statement of a card cites the source lines it comes from; references are checked against
   the code shown to the model. Works with any OpenAI-compatible endpoint (Ollama, vLLM), never the Vercel AI
   Gateway. Summaries and cards are written in English and stored in a separate Postgres schema, `rag`.
-- **Verification and review**: a second model reading checks every card against the code (verdict per statement,
-  missing rules); side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
+- **Verification and review**: a decision model (`d1-omni` through Ollama) checks every card against the code in
+  seconds (probability per statement, suspected missing rules); side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
   reviewer describes the mistake, the model rewrites the card) and regeneration. Corrections are kept and re-applied
   at every regeneration.
 - **Embedding index** in pgvector: every card that is not excluded is split into chunks (overview and sections) and
@@ -74,7 +74,9 @@ Open http://localhost:3000: the first account created is the administrator. Furt
 `AUTH_ALLOW_SIGNUP=true`.
 
 AI understanding needs a model: set `AI_MODEL` (and `AI_BASE_URL` if the model is not served by the bundled Ollama).
-The chat also needs an embedding model: `EMBEDDING_MODEL` (multilingual, e.g. `bge-m3`). With the bundled Ollama:
+The chat also needs an embedding model: `EMBEDDING_MODEL` (multilingual, e.g. `bge-m3`). The card verification needs
+the decision model `d1-omni` (`DECISION_MODEL`; LFM Open License, see [Licenses](docs/licenses.md#decision-model)).
+With the bundled Ollama:
 `docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull <model>`.
 See [Installation](docs/installation.md#ai-model).
 
@@ -107,16 +109,24 @@ pnpm dev:worker                 # worker (in another terminal)
 
 ## Structure
 
+Hexagonal architecture (ports and adapters): `packages/core` holds the domain, the use cases and the ports and
+depends on Effect only; inbound adapters call its inbound ports, outbound adapters implement its outbound ports
+([details](docs/architecture.md#hexagonal-architecture)).
+
 ```
-apps/
-  web/        TanStack Start: pages, server functions, server routes (upload, SSE, authentication)
-  worker/     job pipeline execution and migration command
 packages/
-  core/       domain (Effect): schemas, errors, configuration, ports, pipeline, use cases
-  db/         Drizzle schema, migrations, repositories, LISTEN/NOTIFY listener
-  analysis/   acquisition (zip, Git, filters, languages, credential masking) and tree-sitter parsing
-  ai/         AI layer: chat and embedding models over the AI SDK (retry, timeout, concurrency, validation),
-              call log port, versioned prompts
+  core/         the hexagon: domain (entities, card schemas, filters, credential masking), application (use cases,
+                pipelines, prompts), ports/inbound (Projects, Jobs, Analysis, Knowledge, Rag, Evaluation, Export),
+                ports/outbound (repositories, models, source, analyzer, archive, secrets, job events)
+adapters/
+  inbound/
+    web/        TanStack Start: pages, server functions, server routes (upload, SSE, chat, export, auth)
+    worker/     job loop and migration command
+  outbound/
+    postgres/   Drizzle schema, migrations, repositories, LISTEN/NOTIFY, secret encryption
+    openai/     chat and embedding models over the AI SDK (OpenAI-compatible endpoints: Ollama, vLLM…)
+    ollama/     decision model over Ollama's System One API (card verification)
+    filesystem/ uploads and work areas, zip extraction, Git clone, tree-sitter analysis, zip writing
 docs/         architecture and flow documentation
 ```
 

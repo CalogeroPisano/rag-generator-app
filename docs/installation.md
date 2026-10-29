@@ -79,6 +79,36 @@ support JSON-schema constrained output (`response_format`), as Ollama and vLLM d
 There is no limit on how long the model takes to send its first token other than `AI_TIMEOUT`: model calls do not use
 Node's built-in `fetch`, which gives up after 5 minutes without response headers.
 
+### Decision model
+
+The worker verifies the cards with a **decision model** through Ollama's System One API (`POST /v1/systemone`,
+Ollama 0.35 or later): it answers yes/no questions with a probability and generates no text, so a card is verified in
+seconds. It is **required**: without the model the verification fails (`ollama pull d1-omni`). The default is
+`d1-omni` by Liquid AI (600M parameters, about 850 MB; `d1`, 3B, is more accurate and slower). Both are released
+under the **LFM Open License v1.0** (see [Licenses](licenses.md#decision-model)).
+
+| Variable                       | Default               | Description                                                                      |
+| ------------------------------ | --------------------- | -------------------------------------------------------------------------------- |
+| `DECISION_MODEL`               | `d1-omni`             | Decision model (System One API)                                                  |
+| `DECISION_BASE_URL`            | `http://ollama:11434` | Ollama server, without `/v1` (`http://host.docker.internal:11434` on host)       |
+| `DECISION_TIMEOUT`             | `2 minutes`           | Timeout of one request                                                           |
+| `DECISION_MAX_RETRIES`         | `2`                   | Retries of transient errors                                                      |
+| `DECISION_CONCURRENCY`         | `1`                   | Requests in parallel per worker process                                          |
+| `DECISION_CONTEXT_TOKENS`      | `12000`               | Budget of one request (Ollama's context, `OLLAMA_CONTEXT_LENGTH`, must cover it) |
+| `DECISION_MAX_QUESTIONS`       | `64`                  | Questions per request (2–64)                                                     |
+| `DECISION_KEEP_ALIVE`          | `10m`                 | How long Ollama keeps the model loaded                                           |
+| `VERIFY_SUPPORTED_THRESHOLD`   | `0.7`                 | A statement at or above this probability is confirmed                            |
+| `VERIFY_UNSUPPORTED_THRESHOLD` | `0.3`                 | Below this probability it is not confirmed (in between: partial)                 |
+| `VERIFY_MISSING_THRESHOLD`     | `0.5`                 | At or above this probability the card probably misses rules of the code          |
+
+```bash
+docker compose exec ollama ollama pull d1-omni
+```
+
+The thresholds are a starting point: compare the verdicts with the reviewers' decisions and adjust them. With a
+small GPU, the chat model and the decision model may not fit in memory together: Ollama then swaps them, which costs a
+few seconds at the start of `verify-cards`.
+
 ### Embeddings and chat
 
 The chat searches the cards through embeddings stored in pgvector, computed by an embedding model behind an

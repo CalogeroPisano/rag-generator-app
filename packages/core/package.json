@@ -4,15 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./outbound": "./src/outbound.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@code-to-rag/ai": "workspace:*",
-    "@code-to-rag/analysis": "workspace:*",
-    "effect": "4.0.5",
-    "fflate": "0.8.3"
+    "effect": "4.0.5"
   }
 }

@@ -12,7 +12,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "unit",
-          include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts"],
+          include: ["packages/*/test/**/*.test.ts", "adapters/*/*/test/**/*.test.ts"],
           exclude: ["**/*.integration.test.ts"]
         }
       },
@@ -20,7 +20,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "integration",
-          include: ["packages/*/test/**/*.integration.test.ts", "apps/*/test/**/*.integration.test.ts"],
+          include: ["packages/*/test/**/*.integration.test.ts", "adapters/*/*/test/**/*.integration.test.ts"],
           // Integration tests share one database: run their files one at a time.
           fileParallelism: false,
           testTimeout: 30_000,

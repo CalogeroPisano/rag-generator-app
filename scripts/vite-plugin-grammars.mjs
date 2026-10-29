@@ -12,7 +12,9 @@ import * as path from "node:path"
 const LICENSE_FILE = /^(licen[cs]e|notice|copying|copyright)([.-].*)?$/i
 
 /** The analysis package owns these dependencies, so resolve them from there. */
-const requireFromAnalysis = createRequire(path.resolve(import.meta.dirname, "../packages/analysis/package.json"))
+const requireFromAnalysis = createRequire(
+  path.resolve(import.meta.dirname, "../adapters/outbound/filesystem/package.json")
+)
 
 const WASM_FILES = [
   "web-tree-sitter/web-tree-sitter.wasm",

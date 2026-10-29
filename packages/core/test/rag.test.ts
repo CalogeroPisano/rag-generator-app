@@ -1,13 +1,10 @@
-import {
-  AiError,
-  type CardContent,
-  scriptedEmbeddingModel,
-  scriptedLanguageModel,
-  type TextRequest
-} from "@code-to-rag/ai"
+import { type CardContent } from "../src/domain/card.ts"
+import { AiError, type TextRequest } from "../src/ports/outbound/models.ts"
+import { hashEmbedding, scriptedEmbeddingModel, scriptedLanguageModel } from "../src/testing.ts"
+import { citedSources } from "../src/application/prompts/chat.ts"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
-import { AppConfig } from "../src/config.ts"
+import { AppConfig } from "../src/application/config.ts"
 import {
   ChatConversation,
   ChatMessage,
@@ -19,18 +16,18 @@ import {
   SnapshotId,
   type TestResult,
   UserId
-} from "../src/domain.ts"
+} from "../src/domain/model.ts"
 import {
   ChatRepository,
   type ContextCard,
   IndexRepository,
   type NewChatMessage,
   ProjectRepository
-} from "../src/ports.ts"
-import { askQuestion, type ChatEvent, prepareAnswer } from "../src/rag/chat.ts"
-import { cardChunks } from "../src/rag/chunks.ts"
-import { runTotals } from "../src/rag/evaluation.ts"
-import { fuseRankings, searchTerms } from "../src/rag/retrieval.ts"
+} from "../src/ports/outbound/repositories.ts"
+import { askQuestion, type ChatEvent, prepareAnswer } from "../src/application/rag/chat.ts"
+import { cardChunks } from "../src/application/rag/chunks.ts"
+import { runTotals } from "../src/application/rag/evaluation.ts"
+import { fuseRankings, searchTerms } from "../src/application/rag/retrieval.ts"
 
 const content = (title: string, extra: Partial<CardContent> = {}): CardContent => ({
   title,
@@ -363,5 +360,23 @@ describe("askQuestion", () => {
       ["user", "complete"],
       ["assistant", "failed"]
     ])
+  })
+})
+
+describe("citedSources", () => {
+  it("returns the valid source numbers in order of first citation", () => {
+    expect(citedSources("Yes [2]. Also [1][2] and [3, 1]. Not [9] or [0].", 3)).toEqual([2, 1, 3])
+    expect(citedSources("No sources.", 3)).toEqual([])
+  })
+})
+
+describe("hashEmbedding", () => {
+  it("is normalized and closer for texts sharing words", () => {
+    const dot = (a: ReadonlyArray<number>, b: ReadonlyArray<number>) => a.reduce((sum, x, i) => sum + x * b[i]!, 0)
+    const upload = hashEmbedding("upload size limit")
+    expect(dot(upload, upload)).toBeCloseTo(1)
+    expect(dot(upload, hashEmbedding("maximum upload size"))).toBeGreaterThan(
+      dot(upload, hashEmbedding("password reset email"))
+    )
   })
 })

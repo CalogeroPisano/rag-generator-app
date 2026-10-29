@@ -19,7 +19,7 @@
     "licenses:check": "node scripts/check-licenses.mjs",
     "db:migrate": "pnpm --filter @code-to-rag/worker migrate",
     "db:up": "docker compose up -d postgres",
-    "db:generate": "pnpm --filter @code-to-rag/db generate",
+    "db:generate": "pnpm --filter @code-to-rag/postgres generate",
     "licenses:report": "node scripts/check-licenses.mjs --all",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",

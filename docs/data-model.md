@@ -1,7 +1,7 @@
 # Data model
 
-The schema is defined with Drizzle in `packages/db/src/schema/`; versioned migrations are in
-`packages/db/migrations/`. The `vector` extension (pgvector) is enabled by the first migration.
+The schema is defined with Drizzle in `adapters/outbound/postgres/src/schema/`; versioned migrations are in
+`adapters/outbound/postgres/migrations/`. The `vector` extension (pgvector) is enabled by the first migration.
 
 ## Tables
 
@@ -182,7 +182,7 @@ The `user`, `session`, `account` and `verification` tables belong to Better Auth
   user. An assistant message keeps the cards given to the model (`sources`, copied: they stay readable after a
   regeneration) and the numbers its answer cites.
 
-Rows read from the database are validated with the domain schemas (`packages/db/src/rows.ts`): an unexpected value
+Rows read from the database are validated with the domain schemas (`adapters/outbound/postgres/src/rows.ts`): an unexpected value
 produces an explicit error instead of flowing into the domain.
 
 ### Model call log
@@ -284,8 +284,10 @@ erDiagram
   card_verification {
     uuid card_id PK "FK"
     int card_version
-    jsonb statements "[{id, verdict, note}]"
+    jsonb statements "[{id, verdict, note, probability?}]"
     jsonb missing "[{section, text, references}]"
+    float8 missing_probability
+    bool missing_suspected
     int issues
     text model
     timestamptz verified_at
@@ -369,7 +371,7 @@ erDiagram
   }
 ```
 
-- **card.content** is the structured card (`CardContent` in `packages/ai/src/prompts/card.ts`): title, summary and the
+- **card.content** is the structured card (`CardContent` in `packages/core/src/domain/card.ts`): title, summary and the
   sections `behavior`, `configuration`, `parameters`, `limits`, `validationRules`, `errors`; every item carries its
   references. **card_reference** holds one row per cited range, for queries by file.
 - **card.change**: how the last incremental update produced the card: `kept` (copied from the previous version, with
@@ -377,7 +379,11 @@ erDiagram
   `created` (new feature); null when written by a full understanding. `version` continues across versions of the
   code.
 - `unreferenced_statements` counts statements left without a valid reference; they count as verification issues.
-- **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`.
+- **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`. Written
+  by the decision model since `prompt_version` 2: each statement has the `probability` that the code supports it,
+  `missing_probability` is the probability that the card misses user-visible rules and `missing_suspected` whether it
+  reached the threshold (one issue); `missing` stays empty. Older verifications (language model) have notes and a
+  list of `missing` items, `missing_probability` null.
 - **correction**: reviewer corrections. They do not cascade from `rag.snapshot`: they belong to the project and to a
   feature name, survive new feature maps (re-attached by `feature_key`) and are deleted only with the project.
 - The reviewer's name is copied into `card.reviewed_by` and `correction.author_name` (no link to the application's
@@ -406,8 +412,8 @@ The `job` table also has `payload` (input of `card` jobs) and `dedupe_key` (one 
 ## Migrations
 
 ```bash
-# after a change to packages/db/src/schema/*
-pnpm db:generate     # creates packages/db/migrations/NNNN_*.sql
+# after a change to adapters/outbound/postgres/src/schema/*
+pnpm db:generate     # creates adapters/outbound/postgres/migrations/NNNN_*.sql
 pnpm db:migrate      # applies the migrations (development)
 ```
 

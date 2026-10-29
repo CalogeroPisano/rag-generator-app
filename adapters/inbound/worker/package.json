@@ -1,0 +1,27 @@
+{
+  "name": "@code-to-rag/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../../.env src/main.ts",
+    "build": "vite build",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "migrate": "tsx --env-file-if-exists=../../../.env src/migrate.ts"
+  },
+  "dependencies": {
+    "@code-to-rag/core": "workspace:*",
+    "@code-to-rag/filesystem": "workspace:*",
+    "@code-to-rag/ollama": "workspace:*",
+    "@code-to-rag/openai": "workspace:*",
+    "@code-to-rag/postgres": "workspace:*",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "ai": "7.0.150",
+    "drizzle-orm": "0.45.4",
+    "fflate": "0.8.3",
+    "vite": "8.3.5"
+  }
+}
