@@ -1,0 +1,1 @@
+ALTER TABLE "rag"."card" ADD COLUMN "statement_reviews" jsonb DEFAULT '[]'::jsonb NOT NULL;

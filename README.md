@@ -36,7 +36,7 @@ Commercially distributable product, installed **on premise** with Docker Compose
 - **Technical features skipped**: before the cards are written, the decision model sets aside features that only
   concern bootstrap, build, tests or tooling (no card, no model time); a reviewer can still generate their card.
 - **Verification and review**: a decision model (`d1-omni` through Ollama) checks every card against the code in
-  seconds (probability per statement), the chat model lists the rules the card misses; side-by-side card/code review page with approve, exclude, structured edit, assisted correction (the
+  seconds (probability per statement), the chat model lists the rules the card misses; side-by-side card/code review page with per-statement decisions (confirmed / wrong, approving the card confirms the rest), approve, exclude, structured edit, assisted correction (the
   reviewer describes the mistake, the model rewrites the card) and regeneration. Corrections are kept and re-applied
   at every regeneration.
 - **Embedding index** in pgvector: every card that is not excluded is split into chunks (overview and sections) and

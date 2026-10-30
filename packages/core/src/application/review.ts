@@ -4,7 +4,7 @@
  * immediate. Also project deletion.
  */
 import { CARD } from "./prompts/card.ts"
-import { CARD_VERIFY } from "./prompts/verify.ts"
+import { CARD_VERIFY, cardStatements } from "./prompts/verify.ts"
 import { type CardContent } from "../domain/card.ts"
 import { DecisionModel, type EmbeddingModel, LanguageModel } from "../ports/outbound/models.ts"
 import { Effect } from "effect"
@@ -12,6 +12,7 @@ import { UploadStore } from "../ports/outbound/source.ts"
 import { AppConfig } from "./config.ts"
 import {
   type CardJobPayload,
+  type StatementReviewVerdict,
   type CardOperation,
   type Job,
   JobId,
@@ -299,7 +300,54 @@ export const setCardStatus = Effect.fn("setCardStatus")(function* (
   const snapshots = yield* SnapshotRepository
   const { snapshot } = yield* snapshots.get(snapshotId)
   yield* ensureNotUpdating(snapshot.projectId)
-  yield* knowledge.setCardStatus(snapshotId, cardId, status, reviewer)
+  if (status !== "approved") return yield* knowledge.setCardStatus(snapshotId, cardId, status, reviewer)
+  // Approving the card confirms every statement the reviewer has not decided on.
+  const card = yield* knowledge.getCard(snapshotId, cardId)
+  const decided = new Set(card.statementReviews.map((review) => review.id))
+  const reviewedAt = new Date().toISOString()
+  const confirmed = cardStatements(card.content)
+    .filter((statement) => !decided.has(statement.id))
+    .map((statement) => ({ id: statement.id, verdict: "confirmed" as const, reviewer: reviewer.name, reviewedAt }))
+  yield* knowledge.saveStatementReviews(
+    snapshotId,
+    cardId,
+    [...card.statementReviews, ...confirmed],
+    "approved",
+    reviewer
+  )
+})
+
+/**
+ * The reviewer's decision on one statement of the current card version (`null` removes it). It overrides the
+ * automatic verdict. A card not yet in review goes in review; an approved card with a wrong statement too.
+ */
+export const reviewStatement = Effect.fn("reviewStatement")(function* (
+  snapshotId: SnapshotId,
+  cardId: string,
+  statementId: string,
+  verdict: StatementReviewVerdict | null,
+  reviewer: Reviewer
+) {
+  const knowledge = yield* KnowledgeRepository
+  const snapshots = yield* SnapshotRepository
+  const { snapshot } = yield* snapshots.get(snapshotId)
+  yield* ensureNotUpdating(snapshot.projectId)
+  const card = yield* knowledge.getCard(snapshotId, cardId)
+  if (!cardStatements(card.content).some((statement) => statement.id === statementId)) {
+    return yield* new NotFoundError({ entity: "statement", id: statementId })
+  }
+  const others = card.statementReviews.filter((review) => review.id !== statementId)
+  const reviews =
+    verdict === null
+      ? others
+      : [...others, { id: statementId, verdict, reviewer: reviewer.name, reviewedAt: new Date().toISOString() }]
+  const status =
+    card.status === "generated" || card.status === "flagged" || card.status === "needs_recheck"
+      ? ("in_review" as const)
+      : card.status === "approved" && verdict === "wrong"
+        ? ("in_review" as const)
+        : undefined
+  yield* knowledge.saveStatementReviews(snapshotId, cardId, reviews, status, reviewer)
 })
 
 /**

@@ -1,6 +1,17 @@
-import { CircleCheckIcon, CircleHelpIcon, CircleXIcon, FileCodeIcon, TriangleAlertIcon } from "lucide-react"
+import {
+  CircleCheckIcon,
+  CircleHelpIcon,
+  CircleXIcon,
+  FileCodeIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
+  TriangleAlertIcon,
+  UserCheckIcon,
+  UserXIcon
+} from "lucide-react"
 import type { ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -11,10 +22,12 @@ import {
   type Reference,
   SECTIONS,
   type SectionName,
-  sectionLabels
+  sectionLabels,
+  type StatementReviewVerdict
 } from "./statements"
 
 type Verdict = NonNullable<CardData["verification"]>["statements"][number]
+type Review = CardData["statementReviews"][number]
 
 const verdictStyle: Record<
   Verdict["verdict"],
@@ -47,6 +60,80 @@ function VerdictBadge({ verdict }: { verdict: Verdict | undefined }) {
       </TooltipTrigger>
       <TooltipContent className="max-w-sm">{detail}</TooltipContent>
     </Tooltip>
+  )
+}
+
+/** The reviewer's decision: it replaces the automatic verdict, which stays in the tooltip. */
+function ReviewBadge({ review, verdict }: { review: Review; verdict: Verdict | undefined }) {
+  const badge =
+    review.verdict === "confirmed" ? (
+      <Badge variant="success">
+        <UserCheckIcon data-icon="inline-start" />
+        Confermata da {review.reviewer}
+      </Badge>
+    ) : (
+      <Badge variant="destructive">
+        <UserXIcon data-icon="inline-start" />
+        Sbagliata secondo {review.reviewer}
+      </Badge>
+    )
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span>{badge}</span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-sm">
+        {formatDateTime(new Date(review.reviewedAt))}
+        {verdict !== undefined && ` · verifica automatica: ${verdictStyle[verdict.verdict].label.toLowerCase()}`}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
+ * Status of a statement of the current card version: the reviewer's decision if any, otherwise the automatic
+ * verdict (when the verification is current).
+ */
+export function StatementStatus({ card, id }: { card: CardData; id: string }) {
+  const current = card.verification !== null && card.verification.cardVersion === card.version
+  const verdict = current ? card.verification.statements.find((s) => s.id === id) : undefined
+  const review = card.statementReviews.find((r) => r.id === id)
+  return review === undefined ? <VerdictBadge verdict={verdict} /> : <ReviewBadge review={review} verdict={verdict} />
+}
+
+/** Buttons of the reviewer's decision on a statement; pressing the active one removes it. */
+function ReviewButtons({
+  value,
+  disabled,
+  onChange
+}: {
+  value: StatementReviewVerdict | undefined
+  disabled: boolean
+  onChange: (verdict: StatementReviewVerdict | null) => void
+}) {
+  const button = (verdict: StatementReviewVerdict, label: string, icon: ReactNode) => (
+    <Button
+      type="button"
+      variant={value === verdict ? (verdict === "confirmed" ? "default" : "destructive") : "ghost"}
+      size="icon"
+      className="size-7"
+      disabled={disabled}
+      title={value === verdict ? "Annulla la tua decisione" : label}
+      aria-label={value === verdict ? "Annulla la tua decisione" : label}
+      aria-pressed={value === verdict}
+      onClick={(event) => {
+        event.stopPropagation()
+        onChange(value === verdict ? null : verdict)
+      }}
+    >
+      {icon}
+    </Button>
+  )
+  return (
+    <span className="ml-auto flex gap-1">
+      {button("confirmed", "Confermo l'affermazione", <ThumbsUpIcon />)}
+      {button("wrong", "L'affermazione è sbagliata", <ThumbsDownIcon />)}
+    </span>
   )
 }
 
@@ -88,7 +175,7 @@ function ReferenceChips({
 }
 
 /** Text of a statement as the reviewer reads it. */
-const statementText = (content: Content, section: SectionName, index: number): ReactNode => {
+export const statementText = (content: Content, section: SectionName, index: number): ReactNode => {
   switch (section) {
     case "parameters": {
       const item = content.parameters[index]!
@@ -130,15 +217,20 @@ const statementText = (content: Content, section: SectionName, index: number): R
 export function CardReview({
   card,
   selected,
-  onSelect
+  onSelect,
+  onReview,
+  reviewDisabled
 }: {
   card: CardData
   selected: string | undefined
   onSelect: (statementId: string, reference: Reference | undefined) => void
+  /** The reviewer's decision on a statement (`null` removes it). */
+  onReview: (statementId: string, verdict: StatementReviewVerdict | null) => void
+  reviewDisabled: boolean
 }) {
   const { content, verification } = card
   const current = verification !== null && verification.cardVersion === card.version
-  const verdicts = new Map(current ? verification.statements.map((s) => [s.id, s]) : [])
+  const reviews = new Map(card.statementReviews.map((review) => [review.id, review]))
 
   return (
     <div className="flex flex-col gap-6 text-sm">
@@ -191,8 +283,13 @@ export function CardReview({
                     >
                       <div className="leading-relaxed">{statementText(content, section, index)}</div>
                       <div className="flex flex-wrap items-center gap-1">
-                        <VerdictBadge verdict={verdicts.get(id)} />
+                        <StatementStatus card={card} id={id} />
                         <ReferenceChips references={item.references} onOpen={(reference) => onSelect(id, reference)} />
+                        <ReviewButtons
+                          value={reviews.get(id)?.verdict}
+                          disabled={reviewDisabled}
+                          onChange={(verdict) => onReview(id, verdict)}
+                        />
                       </div>
                     </div>
                   </li>

@@ -55,6 +55,24 @@ export const changeCardStatus = createServerFn({ method: "POST" })
     runEffect(Knowledge.setCardStatus(data.snapshotId, data.cardId, data.status, reviewer(context.user)))
   )
 
+/** The reviewer's decision on one statement (`null` removes it). */
+export const changeStatementReview = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    validate(
+      Schema.Struct({
+        ...CardRef,
+        statementId: Schema.String.check(Schema.isMaxLength(64)),
+        verdict: Schema.NullOr(Schema.Literals(["confirmed", "wrong"]))
+      })
+    )
+  )
+  .handler(({ data, context }) =>
+    runEffect(
+      Knowledge.reviewStatement(data.snapshotId, data.cardId, data.statementId, data.verdict, reviewer(context.user))
+    )
+  )
+
 /** Card jobs queued or running for a project: the review page shows which cards are being processed. */
 export const listCardJobs = createServerFn({ method: "GET" })
   .middleware([authMiddleware])

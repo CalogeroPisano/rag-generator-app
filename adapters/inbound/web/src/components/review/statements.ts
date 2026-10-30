@@ -48,3 +48,25 @@ export const fileName = (path: string) => path.slice(path.lastIndexOf("/") + 1)
 
 export const formatReference = (reference: Reference) =>
   `${fileName(reference.path)}:${reference.startLine}${reference.endLine === reference.startLine ? "" : `–${reference.endLine}`}`
+
+export type StatementReviewVerdict = CardData["statementReviews"][number]["verdict"]
+
+/**
+ * Statements still to be checked by the reviewer: no decision of theirs, and the automatic verification did not
+ * confirm them (or there is no current verification, or they have no references).
+ */
+export const statementsToCheck = (card: CardData): Array<Statement> => {
+  const current = card.verification !== null && card.verification.cardVersion === card.version
+  const verdicts = new Map(current ? card.verification.statements.map((s) => [s.id, s.verdict]) : [])
+  const decided = new Set(card.statementReviews.map((review) => review.id))
+  return statementsOf(card.content).filter(
+    (statement) =>
+      !decided.has(statement.id) && (statement.references.length === 0 || verdicts.get(statement.id) !== "supported")
+  )
+}
+
+/** Statements the reviewer marked as wrong. */
+export const wrongStatements = (card: CardData): Array<Statement> => {
+  const wrong = new Set(card.statementReviews.filter((r) => r.verdict === "wrong").map((r) => r.id))
+  return statementsOf(card.content).filter((statement) => wrong.has(statement.id))
+}

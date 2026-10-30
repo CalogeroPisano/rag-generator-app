@@ -7,13 +7,33 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
-import { type Content, fileName, formatReference, type Reference, sectionLabels } from "./statements"
+import { StatementStatus } from "./card-review"
+import {
+  type CardData,
+  type Content,
+  fileName,
+  formatReference,
+  type Reference,
+  type SectionName,
+  sectionLabels
+} from "./statements"
+
+/** Item fields as compared with the original: trimmed texts, blank optional values as null. */
+const normalize = (item: object): unknown =>
+  Object.fromEntries(
+    Object.entries(item).map(([key, value]) => [
+      key,
+      typeof value === "string" ? (value.trim() === "" && key !== "text" ? null : value.trim()) : value
+    ])
+  )
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends ReadonlyArray<infer U> ? Array<Mutable<U>> : T[K] }
 type Ref = Mutable<Reference>
+/** `origin`: id (`section.index`) of the statement of the current version an item comes from; absent when new. */
 interface StatementDraft {
   text: string
   references: Array<Ref>
+  origin?: string
 }
 interface ParameterDraft {
   name: string
@@ -22,11 +42,13 @@ interface ParameterDraft {
   required: boolean | null
   defaultValue: string | null
   references: Array<Ref>
+  origin?: string
 }
 interface ErrorDraft {
   condition: string
   message: string | null
   references: Array<Ref>
+  origin?: string
 }
 export interface CardDraft {
   title: string
@@ -39,7 +61,18 @@ export interface CardDraft {
   errors: Array<ErrorDraft>
 }
 
-export const toDraft = (content: Content): CardDraft => structuredClone(content) as unknown as CardDraft
+const SECTION_NAMES = ["behavior", "configuration", "parameters", "limits", "validationRules", "errors"] as const
+
+/** Every item remembers the statement it comes from, so that its status stays visible while items move. */
+export const toDraft = (content: Content): CardDraft => {
+  const draft = structuredClone(content) as unknown as CardDraft
+  for (const section of SECTION_NAMES) {
+    draft[section].forEach((item, index) => (item.origin = `${section}.${index}`))
+  }
+  return draft
+}
+
+const withoutOrigin = <T extends { origin?: string }>({ origin: _origin, ...item }: T): Omit<T, "origin"> => item
 
 const blank = (text: string) => (text.trim() === "" ? null : text.trim())
 
@@ -47,24 +80,28 @@ const blank = (text: string) => (text.trim() === "" ? null : text.trim())
 export const fromDraft = (draft: CardDraft): Content => ({
   title: draft.title.trim(),
   summary: draft.summary.trim(),
-  behavior: draft.behavior.filter((s) => s.text.trim() !== "").map((s) => ({ ...s, text: s.text.trim() })),
-  configuration: draft.configuration.filter((s) => s.text.trim() !== "").map((s) => ({ ...s, text: s.text.trim() })),
+  behavior: draft.behavior
+    .filter((s) => s.text.trim() !== "")
+    .map((s) => ({ ...withoutOrigin(s), text: s.text.trim() })),
+  configuration: draft.configuration
+    .filter((s) => s.text.trim() !== "")
+    .map((s) => ({ ...withoutOrigin(s), text: s.text.trim() })),
   parameters: draft.parameters
     .filter((p) => p.name.trim() !== "")
     .map((p) => ({
-      ...p,
+      ...withoutOrigin(p),
       name: p.name.trim(),
       description: p.description.trim(),
       type: blank(p.type ?? ""),
       defaultValue: blank(p.defaultValue ?? "")
     })),
-  limits: draft.limits.filter((s) => s.text.trim() !== "").map((s) => ({ ...s, text: s.text.trim() })),
+  limits: draft.limits.filter((s) => s.text.trim() !== "").map((s) => ({ ...withoutOrigin(s), text: s.text.trim() })),
   validationRules: draft.validationRules
     .filter((s) => s.text.trim() !== "")
-    .map((s) => ({ ...s, text: s.text.trim() })),
+    .map((s) => ({ ...withoutOrigin(s), text: s.text.trim() })),
   errors: draft.errors
     .filter((e) => e.condition.trim() !== "")
-    .map((e) => ({ ...e, condition: e.condition.trim(), message: blank(e.message ?? "") }))
+    .map((e) => ({ ...withoutOrigin(e), condition: e.condition.trim(), message: blank(e.message ?? "") }))
 })
 
 function ReferencesEditor({
@@ -152,10 +189,22 @@ function ReferencesEditor({
   )
 }
 
-function ItemShell({ children, onRemove }: { children: React.ReactNode; onRemove: () => void }) {
+function ItemShell({
+  children,
+  status,
+  onRemove
+}: {
+  children: React.ReactNode
+  /** Status of the statement the item comes from (verification, reviewer decision, changes). */
+  status: React.ReactNode
+  onRemove: () => void
+}) {
   return (
     <div className="flex gap-2 rounded-md border p-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-2">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1">{status}</div>
+        {children}
+      </div>
       <Button type="button" size="icon" variant="ghost" aria-label="Elimina voce" onClick={onRemove}>
         <Trash2Icon />
       </Button>
@@ -170,14 +219,31 @@ export function CardEditor({
   draft,
   onChange,
   files,
-  currentPath
+  currentPath,
+  card
 }: {
   draft: CardDraft
   onChange: (draft: CardDraft) => void
   files: ReadonlyArray<string>
   /** File open in the code pane: new references default to it. */
   currentPath: string | undefined
+  /** The card being edited (current version): status of the statements the items come from. */
+  card: CardData
 }) {
+  const status = (section: SectionName, item: { origin?: string }) => {
+    if (item.origin === undefined) return <Badge variant="info">Nuova</Badge>
+    const [originSection, index] = item.origin.split(".") as [SectionName, string]
+    const original = card.content[originSection][Number(index)]
+    const { origin: _origin, ...edited } = item as Record<string, unknown>
+    const changed = original === undefined || JSON.stringify(normalize(original)) !== JSON.stringify(normalize(edited))
+    return (
+      <>
+        <StatementStatus card={card} id={item.origin} />
+        {originSection !== section && <Badge variant="outline">Da: {sectionLabels[originSection]}</Badge>}
+        {changed && <Badge variant="warning">Modificata: lo stato si azzera al salvataggio</Badge>}
+      </>
+    )
+  }
   const update = (patch: Partial<CardDraft>) => onChange({ ...draft, ...patch })
   const refs = (references: Array<Ref>, set: (references: Array<Ref>) => void) => (
     <ReferencesEditor references={references} files={files} defaultPath={currentPath} onChange={set} />
@@ -204,7 +270,11 @@ export function CardEditor({
             const set = (next: StatementDraft) =>
               update({ [section]: draft[section].map((s, j) => (j === i ? next : s)) })
             return (
-              <ItemShell key={i} onRemove={() => update({ [section]: draft[section].filter((_, j) => j !== i) })}>
+              <ItemShell
+                key={i}
+                status={status(section, item)}
+                onRemove={() => update({ [section]: draft[section].filter((_, j) => j !== i) })}
+              >
                 <Textarea value={item.text} onChange={(event) => set({ ...item, text: event.target.value })} />
                 {refs(item.references, (references) => set({ ...item, references }))}
               </ItemShell>
@@ -230,7 +300,11 @@ export function CardEditor({
           const set = (next: ParameterDraft) =>
             update({ parameters: draft.parameters.map((p, j) => (j === i ? next : p)) })
           return (
-            <ItemShell key={i} onRemove={() => update({ parameters: draft.parameters.filter((_, j) => j !== i) })}>
+            <ItemShell
+              key={i}
+              status={status("parameters", item)}
+              onRemove={() => update({ parameters: draft.parameters.filter((_, j) => j !== i) })}
+            >
               <div className="grid gap-2 sm:grid-cols-2">
                 <Input
                   placeholder="Nome"
@@ -295,7 +369,11 @@ export function CardEditor({
         {draft.errors.map((item, i) => {
           const set = (next: ErrorDraft) => update({ errors: draft.errors.map((e, j) => (j === i ? next : e)) })
           return (
-            <ItemShell key={i} onRemove={() => update({ errors: draft.errors.filter((_, j) => j !== i) })}>
+            <ItemShell
+              key={i}
+              status={status("errors", item)}
+              onRemove={() => update({ errors: draft.errors.filter((_, j) => j !== i) })}
+            >
               <Textarea
                 placeholder="Quando si verifica"
                 value={item.condition}

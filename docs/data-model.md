@@ -384,6 +384,9 @@ erDiagram
   `created` (new feature); null when written by a full understanding. `version` continues across versions of the
   code.
 - `unreferenced_statements` counts statements left without a valid reference; they count as verification issues.
+- **card.statement_reviews**: the reviewer's decisions on the statements of the current version, `[{ id, verdict:
+confirmed | wrong, reviewer, reviewedAt }]` (ids `section.index`); approving the card confirms the undecided ones.
+  Cleared by a manual edit; they are the reference data for tuning the decision model's thresholds.
 - **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`. Since
   `prompt_version` 3 each statement has the `probability` (decision model) that the code supports it; `missing` is
   listed by the language model; `model` names both. Older verifications (language model alone) have a `note` per

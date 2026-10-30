@@ -297,6 +297,7 @@ export const KnowledgeRepositoryLive = Layer.effect(
           updatedAt: row.card.updatedAt,
           reviewedBy: row.card.reviewedBy,
           reviewedAt: row.card.reviewedAt,
+          statementReviews: row.card.statementReviews,
           verification:
             v === null
               ? null
@@ -410,6 +411,8 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 summary: edit.content.summary,
                 unreferencedStatements: edit.unreferencedStatements,
                 version: sql`${card.version} + 1`,
+                // A new version: statement ids may point at different statements now.
+                statementReviews: [],
                 status: "in_review",
                 reviewedBy: reviewer.name,
                 reviewedAt: new Date()
@@ -434,6 +437,22 @@ export const KnowledgeRepositoryLive = Layer.effect(
           db
             .update(card)
             .set({ status, reviewedBy: reviewer.name, reviewedAt: new Date() })
+            .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
+            .returning({ id: card.id })
+        ).pipe(
+          Effect.flatMap((rows) =>
+            rows.length > 0 ? Effect.void : Effect.fail(new NotFoundError({ entity: "card", id: cardId }))
+          )
+        ),
+
+      saveStatementReviews: (id, cardId, reviews, status, reviewer) =>
+        query("knowledge.saveStatementReviews", () =>
+          db
+            .update(card)
+            .set({
+              statementReviews: [...reviews],
+              ...(status === undefined ? {} : { status, reviewedBy: reviewer.name, reviewedAt: new Date() })
+            })
             .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
             .returning({ id: card.id })
         ).pipe(

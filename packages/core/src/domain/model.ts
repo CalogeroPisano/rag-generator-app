@@ -264,6 +264,20 @@ export class CardVerification extends Schema.Class<CardVerification>("CardVerifi
   issues: Schema.Int
 }) {}
 
+/** A reviewer's decision on one statement (`section.index`) of the current card version. */
+export const StatementReviewVerdict = Schema.Literals(["confirmed", "wrong"])
+export type StatementReviewVerdict = typeof StatementReviewVerdict.Type
+
+export const StatementReview = Schema.Struct({
+  id: Schema.String,
+  verdict: StatementReviewVerdict,
+  /** Reviewer's name (copied, like `card.reviewed_by`). */
+  reviewer: Schema.String,
+  /** ISO timestamp. */
+  reviewedAt: Schema.String
+})
+export type StatementReview = typeof StatementReview.Type
+
 export class CardView extends Schema.Class<CardView>("CardView")({
   id: Schema.String,
   feature: Schema.Struct({
@@ -286,6 +300,8 @@ export class CardView extends Schema.Class<CardView>("CardView")({
   reviewedBy: Schema.NullOr(Schema.String),
   reviewedAt: Schema.NullOr(Schema.Date),
   verification: Schema.NullOr(CardVerification),
+  /** Reviewer decisions on the statements of this version (they override the automatic verdicts). */
+  statementReviews: Schema.Array(StatementReview),
   corrections: Schema.Array(Correction)
 }) {}
 

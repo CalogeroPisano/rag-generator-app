@@ -147,6 +147,11 @@ export const card = rag.table(
     version: integer("version").notNull().default(1),
     /** Statements without any valid reference (candidates for verification). */
     unreferencedStatements: integer("unreferenced_statements").notNull().default(0),
+    /** Reviewer decisions on the statements of this version: `[{ id, verdict, reviewer, reviewedAt }]`. */
+    statementReviews: jsonb("statement_reviews")
+      .$type<Array<{ id: string; verdict: "confirmed" | "wrong"; reviewer: string; reviewedAt: string }>>()
+      .notNull()
+      .default([]),
     /**
      * How an incremental update produced the card: `kept` (copied, code unchanged), `updated` (rewritten from the
      * previous version) or `created` (new feature). Null when written by a full understanding.

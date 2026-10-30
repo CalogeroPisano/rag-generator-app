@@ -23,6 +23,7 @@ import type {
   TestRunView,
   CardVerification,
   CardView,
+  StatementReview,
   Correction,
   FeatureMap,
   FeatureSymbol,
@@ -459,6 +460,17 @@ export class KnowledgeRepository extends Context.Service<
       id: SnapshotId,
       cardId: string,
       status: CardStatus,
+      reviewer: Reviewer
+    ): Effect.Effect<void, NotFoundError | DatabaseError>
+    /**
+     * Replaces the reviewer decisions on the statements of the card's current version, and its status when given
+     * (with the reviewer, like `setCardStatus`).
+     */
+    saveStatementReviews(
+      id: SnapshotId,
+      cardId: string,
+      reviews: ReadonlyArray<StatementReview>,
+      status: CardStatus | undefined,
       reviewer: Reviewer
     ): Effect.Effect<void, NotFoundError | DatabaseError>
     addCorrection(correction: NewCorrection): Effect.Effect<Correction, DatabaseError>

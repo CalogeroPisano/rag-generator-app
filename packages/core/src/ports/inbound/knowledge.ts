@@ -5,6 +5,7 @@ export {
   editCard,
   requestCardOperation,
   requestFeatureCard,
+  reviewStatement,
   setCardStatus
 } from "../../application/review.ts"
 export { getCard, getFeatureMap, getFileSummary, getModelCallStats, getModelStatus } from "../../application/queries.ts"

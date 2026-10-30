@@ -159,6 +159,39 @@ describe.skipIf(url === undefined)("card review (PostgreSQL)", () => {
     expect(again._tag).toBe("InvalidInputError")
   })
 
+  it("records the reviewer's decisions on statements and confirms the rest on approval", async () => {
+    const { snapshotId, featureId, cardId } = await understood()
+    const card = () => currentCard(snapshotId, featureId)
+    expect((await card()).status).toBe("flagged")
+
+    await run(Knowledge.reviewStatement(snapshotId, cardId, "limits.0", "wrong", reviewer))
+    await run(Knowledge.reviewStatement(snapshotId, cardId, "behavior.0", "confirmed", reviewer))
+    // A decision puts the card in review; deciding again replaces it, null removes it.
+    expect(await card()).toMatchObject({ status: "in_review" })
+    await run(Knowledge.reviewStatement(snapshotId, cardId, "behavior.0", null, reviewer))
+    expect((await card()).statementReviews.map((r) => [r.id, r.verdict, r.reviewer])).toEqual([
+      ["limits.0", "wrong", "Revisore"]
+    ])
+    const unknown = await run(Effect.flip(Knowledge.reviewStatement(snapshotId, cardId, "limits.9", "wrong", reviewer)))
+    expect(unknown._tag).toBe("NotFoundError")
+
+    // Approval confirms every statement without a decision and keeps the reviewer's ones.
+    await run(Knowledge.setCardStatus(snapshotId, cardId, "approved", reviewer))
+    const approved = await card()
+    expect(approved.status).toBe("approved")
+    expect(Object.fromEntries(approved.statementReviews.map((r) => [r.id, r.verdict]))).toEqual({
+      "behavior.0": "confirmed",
+      "parameters.0": "confirmed",
+      "limits.0": "wrong",
+      "errors.0": "confirmed"
+    })
+    // Marking a statement wrong on an approved card reopens it; a manual edit (new version) clears the decisions.
+    await run(Knowledge.reviewStatement(snapshotId, cardId, "errors.0", "wrong", reviewer))
+    expect((await card()).status).toBe("in_review")
+    await run(Knowledge.editCard(snapshotId, cardId, approved.content, reviewer))
+    expect((await card()).statementReviews).toEqual([])
+  })
+
   it("verifies a card on demand and keeps review decisions", async () => {
     const { snapshotId, featureId, cardId } = await understood()
     expect((await currentCard(snapshotId, featureId)).status).toBe("flagged")

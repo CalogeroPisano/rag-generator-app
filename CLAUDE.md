@@ -134,8 +134,13 @@ inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
 3. Corrections (`rag.correction`) belong to project + normalized feature name (`featureKey`), are passed to every
    card prompt of the feature and re-attached by `reattachCorrections` after `replaceFeatures`. Manual edits
    (`editCard`) and decisions (`setCardStatus`) are immediate; references are checked against the snapshot's files.
-4. Understanding and card jobs exclude each other per project (`JobRepository.active`).
-5. `deleteProject`: refused if a job is running; `KnowledgeRepository.deleteProject` (rag rows + corrections) then
+4. Statement decisions (user's choice): `reviewStatement` stores confirmed/wrong per statement id on the card version
+   (`card.statement_reviews`, cleared by `editCard`, copied with `copyCard`); they override automatic verdicts in the
+   UI; approving (`setCardStatus` approved) confirms every undecided statement. Every card action in the UI goes
+   through a confirmation dialog (`ConfirmAction`); the approval dialog lists statements to check, wrong ones and
+   missing items. The editor shows the status of the statement each item comes from (`origin` in the draft).
+5. Understanding and card jobs exclude each other per project (`JobRepository.active`).
+6. `deleteProject`: refused if a job is running; `KnowledgeRepository.deleteProject` (rag rows + corrections) then
    `ProjectRepository.delete` (cascade, orphan blobs) and upload files.
 
 ### Data flow (phase 5: index, RAG chat, test questions)

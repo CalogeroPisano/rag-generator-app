@@ -14,21 +14,12 @@ import { toast } from "sonner"
 import type { CodeFocus } from "@/components/code/code-viewer.client"
 import { PageHeader } from "@/components/page-header"
 import { CardEditor, type CardDraft, fromDraft, toDraft } from "@/components/review/card-editor"
+import { ApprovalDetails } from "@/components/review/approval-details"
 import { CardReview } from "@/components/review/card-review"
 import { CodePane } from "@/components/review/code-pane"
-import { allReferences, type Reference } from "@/components/review/statements"
+import { ConfirmAction } from "@/components/review/confirm-action"
+import { allReferences, type Reference, statementsToCheck, wrongStatements } from "@/components/review/statements"
 import { CardStatusBadge } from "@/components/status-badge"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
-} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -49,6 +40,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { getProject } from "@/functions/projects.functions"
 import {
   changeCardStatus,
+  changeStatementReview,
   listCardJobs,
   saveCardEdit,
   startCardOperation,
@@ -188,6 +180,12 @@ function Review({
     },
     onError
   })
+  const review = useMutation({
+    mutationFn: (input: { statementId: string; verdict: "confirmed" | "wrong" | null }) =>
+      changeStatementReview({ data: { snapshotId, cardId: cardId!, ...input } }),
+    onSuccess: refresh,
+    onError
+  })
   const save = useMutation({
     mutationFn: (next: CardDraft) => saveCardEdit({ data: { snapshotId, cardId: cardId!, content: fromDraft(next) } }),
     onSuccess: () => {
@@ -215,6 +213,8 @@ function Review({
   const files = [...new Set([...data.feature.files, ...allReferences(data.content).map((r) => r.path)])]
   const shownPath = path ?? files[0]
   const busy = activeJob !== undefined
+  const toCheck = statementsToCheck(data)
+  const wrong = wrongStatements(data)
   const pending = status.isPending || operation.isPending || correct.isPending || save.isPending || updating
 
   const select = (statementId: string, reference: Reference | undefined) => {
@@ -259,30 +259,55 @@ function Review({
                 </Badge>
               )}
               {data.status === "approved" || data.status === "excluded" ? (
-                <Button
-                  variant="outline"
-                  size="sm"
+                <ConfirmAction
                   disabled={busy || pending}
-                  onClick={() => status.mutate("in_review")}
-                >
-                  <RotateCcwIcon data-icon="inline-start" />
-                  Riapri
-                </Button>
+                  trigger={
+                    <>
+                      <RotateCcwIcon data-icon="inline-start" />
+                      Riapri
+                    </>
+                  }
+                  title="Riaprire la scheda?"
+                  description={`La scheda torna "In revisione"${data.status === "approved" ? ': la chat con "Solo schede approvate" non la userà più finché non la approvi di nuovo' : " e rientra nella chat"}. Le tue decisioni sulle affermazioni restano.`}
+                  confirmLabel="Riapri"
+                  onConfirm={() => status.mutate("in_review")}
+                />
               ) : (
                 <>
-                  <Button size="sm" disabled={busy || pending} onClick={() => status.mutate("approved")}>
-                    <CheckIcon data-icon="inline-start" />
-                    Approva
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
+                  <ConfirmAction
+                    variant="default"
                     disabled={busy || pending}
-                    onClick={() => status.mutate("excluded")}
-                  >
-                    <BanIcon data-icon="inline-start" />
-                    Escludi
-                  </Button>
+                    trigger={
+                      <>
+                        <CheckIcon data-icon="inline-start" />
+                        Approva
+                      </>
+                    }
+                    title="Approvare la scheda?"
+                    description={
+                      toCheck.length === 0
+                        ? 'La scheda diventa "Approvata": le affermazioni senza una tua decisione vengono confermate.'
+                        : `${toCheck.length === 1 ? "Un'affermazione non è stata confermata" : `${toCheck.length} affermazioni non sono state confermate`} né dalla verifica automatica né da te: approvando la scheda ${toCheck.length === 1 ? "la confermi" : "le confermi"}. Controllale prima, se non l'hai fatto.`
+                    }
+                    details={<ApprovalDetails card={data} toCheck={toCheck} wrong={wrong} />}
+                    confirmLabel={toCheck.length === 0 ? "Approva" : "Approva e conferma"}
+                    onConfirm={() => status.mutate("approved")}
+                  />
+                  <ConfirmAction
+                    disabled={busy || pending}
+                    trigger={
+                      <>
+                        <BanIcon data-icon="inline-start" />
+                        Escludi
+                      </>
+                    }
+                    title="Escludere la scheda?"
+                    description={
+                      "La scheda diventa \"Esclusa\": non entra nella chat, nell'indice e nell'export (tranne l'export completo). Puoi riaprirla in seguito."
+                    }
+                    confirmLabel="Escludi"
+                    onConfirm={() => status.mutate("excluded")}
+                  />
                 </>
               )}
               <Button
@@ -327,45 +352,59 @@ function Review({
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
-              <Button variant="outline" size="sm" disabled={busy || pending} onClick={() => operation.mutate("verify")}>
-                <SearchCheckIcon data-icon="inline-start" />
-                Verifica
-              </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" disabled={busy || pending}>
+              <ConfirmAction
+                disabled={busy || pending}
+                trigger={
+                  <>
+                    <SearchCheckIcon data-icon="inline-start" />
+                    Verifica
+                  </>
+                }
+                title="Verificare di nuovo la scheda?"
+                description="Il modello decisionale ricontrolla ogni affermazione sul codice e il modello di linguaggio cerca ciò che manca. Le tue decisioni sulle affermazioni restano e prevalgono sulla verifica."
+                confirmLabel="Verifica"
+                onConfirm={() => operation.mutate("verify")}
+              />
+              <ConfirmAction
+                disabled={busy || pending}
+                trigger={
+                  <>
                     <RefreshCwIcon data-icon="inline-start" />
                     Rigenera
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Rigenerare la scheda?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Il modello riscrive la scheda da zero leggendo il codice e applicando le correzioni salvate. Le
-                      modifiche manuali e l'approvazione vanno perse.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Annulla</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => operation.mutate("regenerate")}>Rigenera</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                  </>
+                }
+                title="Rigenerare la scheda?"
+                description="Il modello riscrive la scheda da zero leggendo il codice e applicando le correzioni salvate. Le modifiche manuali, l'approvazione e le tue decisioni sulle affermazioni vanno perse."
+                confirmLabel="Rigenera"
+                onConfirm={() => operation.mutate("regenerate")}
+              />
             </div>
           ) : (
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={save.isPending} onClick={() => setDraft(null)}>
-                Annulla
-              </Button>
-              <Button
-                size="sm"
+              <ConfirmAction
+                disabled={save.isPending}
+                trigger="Annulla"
+                title="Annullare la modifica?"
+                description="Le modifiche non salvate vanno perse; la scheda resta com'era."
+                confirmLabel="Annulla la modifica"
+                onConfirm={() => setDraft(null)}
+              />
+              <ConfirmAction
+                variant="default"
                 disabled={save.isPending || draft.title.trim() === ""}
-                onClick={() => save.mutate(draft)}
-              >
-                {save.isPending && <Spinner data-icon="inline-start" />}
-                Salva
-              </Button>
+                trigger={
+                  <>
+                    {save.isPending && <Spinner data-icon="inline-start" />}
+                    Salva
+                  </>
+                }
+                title="Salvare la modifica?"
+                description={
+                  'Viene creata una nuova versione della scheda, "In revisione": la verifica precedente diventa non aggiornata e le tue decisioni sulle affermazioni si azzerano (gli indici delle affermazioni possono cambiare).'
+                }
+                confirmLabel="Salva"
+                onConfirm={() => save.mutate(draft)}
+              />
             </div>
           )
         }
@@ -376,9 +415,15 @@ function Review({
           <ScrollArea className="h-full">
             <div className="flex flex-col gap-6 p-4">
               {draft === null ? (
-                <CardReview card={data} selected={selected} onSelect={select} />
+                <CardReview
+                  card={data}
+                  selected={selected}
+                  onSelect={select}
+                  onReview={(statementId, verdict) => review.mutate({ statementId, verdict })}
+                  reviewDisabled={busy || pending || review.isPending}
+                />
               ) : (
-                <CardEditor draft={draft} onChange={setDraft} files={files} currentPath={shownPath} />
+                <CardEditor draft={draft} onChange={setDraft} files={files} currentPath={shownPath} card={data} />
               )}
               {data.corrections.length > 0 && (
                 <section className="flex flex-col gap-2 text-sm">
