@@ -66,6 +66,7 @@ import { planModules } from "./modules.ts"
 import { splitIntoParts } from "./parts.ts"
 import { loadCardSources, verificationModel, verifyCard, writeCard } from "./cards.ts"
 import { selectFiles } from "./select.ts"
+import { STATIC_SUMMARY, STATIC_SUMMARY_MODEL, staticSummary } from "./static-summary.ts"
 import { chunks, groupBy, inputBudget, provenance, skipInvalid, toPhaseError } from "./shared.ts"
 import {
   applyFeatureUpdate,
@@ -255,11 +256,12 @@ const summarizeFiles = Effect.fn("understanding.summarizeFiles")(
 
     let completed = done.size
     let skipped = 0
+    let byRules = 0
     const report = () =>
       progress({
         completed,
         total: files.length,
-        message: `${completed} di ${files.length} file riassunti${skipped > 0 ? ` (${skipped} saltati)` : ""}`
+        message: `${completed} di ${files.length} file riassunti${byRules > 0 ? `, ${byRules} senza modello` : ""}${skipped > 0 ? ` (${skipped} saltati)` : ""}`
       })
     yield* report()
     for (const batch of chunks(pending, FILE_BATCH_SIZE)) {
@@ -267,8 +269,22 @@ const summarizeFiles = Effect.fn("understanding.summarizeFiles")(
         job.snapshotId,
         batch.map((file) => file.path)
       )
+      // Files with no behaviour (barrels, imports only, type definitions) are summarized by rules, not by the model.
+      const ruled = loaded.flatMap((file) => {
+        const summary = staticSummary(file, declarations.get(file.path) ?? [])
+        return summary === undefined ? [] : [summary]
+      })
+      for (const summary of ruled) {
+        yield* knowledge.saveFileSummary(job.snapshotId, summary, {
+          model: STATIC_SUMMARY_MODEL,
+          promptVersion: STATIC_SUMMARY.version
+        })
+        byRules++
+        completed++
+      }
+      const byModel = loaded.filter((file) => !ruled.some((summary) => summary.path === file.path))
       yield* Effect.forEach(
-        loaded,
+        byModel,
         (file) =>
           skipInvalid(summarizeFile(job, file, declarations.get(file.path) ?? []), () => skipped++).pipe(
             Effect.flatMap((summary) =>
@@ -282,7 +298,7 @@ const summarizeFiles = Effect.fn("understanding.summarizeFiles")(
       )
       yield* report()
     }
-    if (files.length > 0 && skipped === files.length) {
+    if (files.length > byRules && skipped === files.length - byRules) {
       return yield* new PhaseError({
         phase: "summarize-files",
         message: "Il modello non ha prodotto riassunti validi per nessun file",

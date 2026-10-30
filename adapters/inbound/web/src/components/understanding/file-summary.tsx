@@ -15,7 +15,11 @@ export function FileSummary({
     <div className="flex flex-col gap-4 p-4 text-sm">
       <div className="flex flex-col gap-1">
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
-          <SparklesIcon className="size-3.5" /> Generato da {summary.model}
+          <SparklesIcon className="size-3.5" />
+          {/* "static-analysis": written by fixed rules, no model (files with no behaviour). */}
+          {summary.model === "static-analysis"
+            ? "Scritto dall'analisi statica: il file non contiene logica"
+            : `Generato da ${summary.model}`}
         </span>
         <p className="leading-relaxed">{summary.summary}</p>
       </div>

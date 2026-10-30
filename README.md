@@ -31,6 +31,8 @@ Commercially distributable product, installed **on premise** with Docker Compose
   its files together. Every statement of a card cites the source lines it comes from; references are checked against
   the code shown to the model. Works with any OpenAI-compatible endpoint (Ollama, vLLM), never the Vercel AI
   Gateway. Summaries and cards are written in English and stored in a separate Postgres schema, `rag`.
+- **Files without logic summarized for free**: barrels (re-exports), imports-only files and TypeScript type
+  definitions get their summary from fixed rules, without calling the model.
 - **Technical features skipped**: before the cards are written, the decision model sets aside features that only
   concern bootstrap, build, tests or tooling (no card, no model time); a reviewer can still generate their card.
 - **Verification and review**: a decision model (`d1-omni` through Ollama) checks every card against the code in

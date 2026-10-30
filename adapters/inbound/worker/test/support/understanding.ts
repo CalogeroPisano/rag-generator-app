@@ -21,6 +21,8 @@ export const sampleProject = () =>
       ].join("\n")
     ),
     "web/src/lib/money.ts": encode(`export function formatPrice(value: number) { return value.toFixed(2) }\n`),
+    // Barrel: summarized by rules, never sent to the model.
+    "web/src/index.ts": encode(`export * from "./orders/service"\nexport { formatPrice } from "./lib/money"\n`),
     "web/src/orders/service.test.ts": encode(`import { OrderService } from "./service"\n`),
     "config/app.json": encode(`{ "maxOrderQuantity": 100 }\n`),
     "README.md": encode("# Shop\n")

@@ -113,8 +113,13 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
     const { snapshot } = await run(SnapshotRepository.use((s) => s.get(snapshotId)))
     expect(snapshot).toMatchObject({ understandingStatus: "ready", featureCount: 1, cardCount: 1 })
 
-    // Tests and docs are not summarized; configuration is.
+    // Tests and docs are not summarized; configuration is; the barrel is summarized by rules.
     expect(calls.filter((id) => id === "file-summary")).toHaveLength(3)
+    const barrel = await run(KnowledgeRepository.use((k) => k.fileSummary(snapshotId, "web/src/index.ts")))
+    expect(Option.getOrThrow(barrel)).toMatchObject({
+      summary: "Index module: re-exports ./orders/service, ./lib/money. No code of its own.",
+      model: "static-analysis"
+    })
     const service = await run(KnowledgeRepository.use((k) => k.fileSummary(snapshotId, "web/src/orders/service.ts")))
     expect(Option.getOrThrow(service)).toMatchObject({
       summary: "Summary of web/src/orders/service.ts.",
@@ -226,13 +231,13 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
         : defaultRespond(request)
     expect((await runClaimed()).status).toBe("succeeded")
     const first = await run(KnowledgeRepository.use((k) => k.fileSummaries(snapshotId)))
-    expect(first.map((s) => s.path)).toEqual(["web/src/lib/money.ts", "web/src/orders/service.ts"])
+    expect(first.map((s) => s.path)).toEqual(["web/src/index.ts", "web/src/lib/money.ts", "web/src/orders/service.ts"])
 
     respond = defaultRespond
     await run(Knowledge.requestUnderstanding(snapshotId))
     expect((await runClaimed()).status).toBe("succeeded")
     const second = await run(KnowledgeRepository.use((k) => k.fileSummaries(snapshotId)))
-    expect(second).toHaveLength(3)
+    expect(second).toHaveLength(4)
   })
 
   it("records every model call without its content", async () => {

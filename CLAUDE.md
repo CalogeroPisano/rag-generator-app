@@ -100,7 +100,9 @@ inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
 1. Manual: "Genera schede" → `startUnderstanding` → `requestUnderstanding` (needs analysis ready) queues an
    `understanding` job. Only the worker runs it (the web calls models for the chat only, phase 5).
 2. `understandingPipeline` (`core/src/application/understanding/pipeline.ts`): `prepare` (reset rag data) → `summarize-files`
-   (code without tests + config files; large files split by `splitIntoParts`, then rolled up) → `summarize-modules`
+   (code without tests + config files; large files split by `splitIntoParts`, then rolled up; files with no
+   behaviour summarized by rules, `staticSummary`, model `static-analysis`, `STATIC_SUMMARY` version: comments only,
+   imports/re-exports only, TS type definitions only; constants and config always go to the model) → `summarize-modules`
    (`planModules`, bottom-up) → `map-features` (batched by token budget, `normalizeFeatures` / `mergeFeatures`) →
    `classify-features` (decision model, prompt `feature-triage`: "would the user documentation describe this feature?";
    below `TRIAGE_USER_FACING_THRESHOLD` → `feature.technical`, no card; a feature with a card in the update base keeps
@@ -306,7 +308,9 @@ of every new dependency before adding it.
   the dev project (8 cards, 103 statements): statements 37 min with qwen3:4b → about 30 s; whole verification with
   `card-missing` on qwen3:4b (GTX 1050 Ti) about 60–120 s per card instead of about 220 s. Feature triage before the cards (point 2, user's choice): technical features get no card,
   reviewers can generate it; on the dev project the 2 technical features of 8 (React bootstrap 0.12, Jest setup 0.27)
-  fall below 0.4, user-level ones score 0.63–0.89. File triage before summaries (point 3) is pending.
+  fall below 0.4, user-level ones score 0.63–0.89. File triage before summaries (point 3, user's choice): fixed rules only, no model
+  (exact matches: comments only, imports/re-exports only, TS type definitions only); measured 15 of 226 files of
+  this repository (all barrels), 1 of 10 on the dev project (`setupTests.js`).
 - Phase 7 (user's choices): export only, no import; everything of the version in use including embeddings; scope
   chosen at every export (all but excluded / approved only); SQL with the same `rag` schema (re-runnable, replaces the
   project's rows); direct streamed download, no job.

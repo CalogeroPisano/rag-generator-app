@@ -371,6 +371,8 @@ erDiagram
   }
 ```
 
+- **file_summary.model** is `static-analysis` for files summarized by rules (no behaviour: comments only, imports or
+  re-exports only, TypeScript type definitions only), with `prompt_version` = the version of the rules.
 - **feature.user_facing** is the probability (decision model, `classify-features`) that the user documentation would
   describe the feature; **feature.technical** marks features below the threshold, which get no card unless a reviewer
   asks for one ("Genera la scheda" sets it back to false).
