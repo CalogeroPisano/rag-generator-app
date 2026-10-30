@@ -70,6 +70,7 @@ export const Route = createFileRoute("/_app/projects/$projectId_/cards/$featureI
 const operationLabels = {
   verify: "Verifica in corso",
   regenerate: "Rigenerazione in corso",
+  generate: "Generazione in corso",
   correct: "Correzione in corso"
 }
 

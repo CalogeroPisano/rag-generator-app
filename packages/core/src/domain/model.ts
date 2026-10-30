@@ -210,6 +210,10 @@ export class FeatureEntry extends Schema.Class<FeatureEntry>("FeatureEntry")({
   description: Schema.String,
   files: Schema.Array(Schema.String),
   symbols: Schema.Array(FeatureSymbol),
+  /** Probability (decision model) that the user documentation would describe the feature; null before the triage. */
+  userFacing: Schema.NullOr(Schema.Number),
+  /** Only technical (bootstrap, build, tests, tooling): no card is generated unless a reviewer asks for one. */
+  technical: Schema.Boolean,
   card: Schema.NullOr(CardInfo)
 }) {}
 
@@ -234,7 +238,8 @@ export class FeatureMap extends Schema.Class<FeatureMap>("FeatureMap")({
   orphanCorrections: Schema.Array(Correction)
 }) {}
 
-export const CardOperation = Schema.Literals(["verify", "regenerate", "correct"])
+/** `generate`: first card of a feature the triage left without one. */
+export const CardOperation = Schema.Literals(["verify", "regenerate", "correct", "generate"])
 export type CardOperation = typeof CardOperation.Type
 
 /** Result of the automatic verification of one card version. */
@@ -316,7 +321,8 @@ export class ModelCallStats extends Schema.Class<ModelCallStats>("ModelCallStats
 
 /** Input of a `card` job: one operation on one card. */
 export const CardJobPayload = Schema.Struct({
-  cardId: Schema.String,
+  /** Null for `generate` (the feature has no card yet). */
+  cardId: Schema.NullOr(Schema.String),
   featureId: Schema.String,
   operation: CardOperation
 })

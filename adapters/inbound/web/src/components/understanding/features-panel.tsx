@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { ClipboardCheckIcon, FileIcon, SparklesIcon } from "lucide-react"
-import { useState } from "react"
+import { ClipboardCheckIcon, FileIcon, FilePlusIcon, SparklesIcon } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { CardChangeBadge, CardStatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Spinner } from "@/components/ui/spinner"
+import { listCardJobs, startFeatureCard } from "@/functions/review.functions"
 import { getFeatureMap } from "@/functions/understanding.functions"
 import { cn } from "@/lib/utils"
 import { CardDetail, type OpenReference } from "./card-detail"
@@ -32,6 +35,34 @@ export function FeaturesPanel({
     staleTime: Infinity
   })
   const [selectedId, setSelectedId] = useState<string | undefined>()
+  const queryClient = useQueryClient()
+
+  // Cards asked for features without one are written by the worker: poll while a job runs, refresh when it ends.
+  const jobs = useQuery({
+    queryKey: ["card-jobs", projectId],
+    queryFn: () => listCardJobs({ data: { projectId } }),
+    refetchInterval: (query) => ((query.state.data ?? []).some((job) => job.operation === "generate") ? 4000 : false)
+  })
+  const generating = new Set(
+    (jobs.data ?? []).filter((job) => job.operation === "generate").map((job) => job.featureId)
+  )
+  const wasGenerating = useRef(false)
+  useEffect(() => {
+    if (generating.size > 0) wasGenerating.current = true
+    else if (wasGenerating.current) {
+      wasGenerating.current = false
+      void queryClient.invalidateQueries({ queryKey: ["feature-map", snapshotId] })
+    }
+  })
+  const generate = useMutation({
+    mutationFn: (featureId: string) => startFeatureCard({ data: { snapshotId, featureId } }),
+    onSuccess: () => {
+      toast.info("Generazione avviata: il modello sta scrivendo la scheda")
+      void queryClient.invalidateQueries({ queryKey: ["feature-map", snapshotId] })
+      void jobs.refetch()
+    },
+    onError: (error: Error) => toast.error(error.message)
+  })
 
   if (map.data === undefined) return <Skeleton className="h-96 w-full" />
   const { features, projectSummary } = map.data
@@ -78,7 +109,7 @@ export function FeaturesPanel({
                     <span className="flex min-w-0 items-start gap-2">
                       <span className="min-w-0 flex-1 text-sm font-medium break-words">{feature.name}</span>
                       {feature.card === null ? (
-                        <Badge variant="secondary">Senza scheda</Badge>
+                        <Badge variant="secondary">{feature.technical ? "Tecnica" : "Senza scheda"}</Badge>
                       ) : (
                         <span className="flex shrink-0 flex-wrap justify-end gap-1">
                           {feature.card.issues !== null && feature.card.issues > 0 && (
@@ -102,11 +133,26 @@ export function FeaturesPanel({
           {selected.card === null ? (
             <Empty className="border">
               <EmptyHeader>
-                <EmptyTitle>Scheda non disponibile</EmptyTitle>
+                <EmptyTitle>{selected.technical ? "Funzionalità solo tecnica" : "Scheda non disponibile"}</EmptyTitle>
                 <EmptyDescription>
-                  Il modello non ha prodotto una scheda valida per questa funzionalità: rilancia la generazione.
+                  {selected.technical
+                    ? "Sembra riguardare solo aspetti tecnici (avvio, build, test, strumenti di sviluppo), quindi la scheda non è stata generata. Se gli utenti devono conoscerla, generala."
+                    : generating.has(selected.id)
+                      ? "Il modello sta scrivendo la scheda."
+                      : "Il modello non ha prodotto una scheda valida per questa funzionalità: generala di nuovo."}
                 </EmptyDescription>
               </EmptyHeader>
+              <Button
+                disabled={generate.isPending || generating.has(selected.id)}
+                onClick={() => generate.mutate(selected.id)}
+              >
+                {generating.has(selected.id) ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <FilePlusIcon data-icon="inline-start" />
+                )}
+                {generating.has(selected.id) ? "Generazione in corso" : "Genera la scheda"}
+              </Button>
             </Empty>
           ) : (
             <>

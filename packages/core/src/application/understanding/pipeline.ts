@@ -37,6 +37,7 @@ import {
   RollupOutput,
   type SymbolLine
 } from "../prompts/summaries.ts"
+import { FEATURE_TRIAGE, renderFeatureTriage, USER_FACING_QUESTION, userFacingQuestion } from "../prompts/triage.ts"
 import { CARD_VERIFY } from "../prompts/verify.ts"
 import { DecisionModel, EmbeddingModel, LanguageModel } from "../../ports/outbound/models.ts"
 import { Effect } from "effect"
@@ -602,6 +603,55 @@ const mapFeatures = Effect.fn("understanding.mapFeatures")(
 )
 
 // ---------------------------------------------------------------------------
+// classify-features
+
+const classifyFeatures = Effect.fn("understanding.classifyFeatures")(
+  function* (job: Job, progress: Progress) {
+    const knowledge = yield* KnowledgeRepository
+    const decision = yield* DecisionModel
+    const thresholds = (yield* AppConfig).triage
+    const context = { phase: "classify-features", jobId: job.id, snapshotId: job.snapshotId }
+    const { features } = yield* knowledge.featureMap(job.snapshotId)
+    const previous = yield* previousCards(yield* updateBase(job))
+    // Features that already have a card (a resumed job) are left as they are.
+    const pending = features.filter((feature) => feature.card === null)
+
+    let completed = 0
+    let technical = 0
+    const report = () =>
+      progress({
+        completed,
+        total: pending.length,
+        message: `${completed} di ${pending.length} funzionalità valutate${technical > 0 ? `, ${technical} solo tecniche (senza scheda)` : ""}`
+      })
+    yield* report()
+    const triage: Array<{ featureId: string; userFacing: number | null; technical: boolean }> = []
+    for (const feature of pending) {
+      if (previous.has(featureKey(feature.name))) {
+        // It had a card in the previous version (maybe asked for by a reviewer): it keeps one.
+        triage.push({ featureId: feature.id, userFacing: null, technical: false })
+      } else {
+        const answer = yield* decision.decide({
+          prompt: FEATURE_TRIAGE,
+          context,
+          state: renderFeatureTriage(feature),
+          questions: { [USER_FACING_QUESTION]: userFacingQuestion }
+        })
+        const userFacing = answer[USER_FACING_QUESTION] ?? null
+        const isTechnical = userFacing !== null && userFacing < thresholds.userFacing
+        if (isTechnical) technical++
+        triage.push({ featureId: feature.id, userFacing, technical: isTechnical })
+      }
+      completed++
+      if (completed % 10 === 0) yield* report()
+    }
+    yield* knowledge.classifyFeatures(job.snapshotId, triage)
+    yield* report()
+  },
+  (effect) => effect.pipe(Effect.mapError(toPhaseError("classify-features")))
+)
+
+// ---------------------------------------------------------------------------
 // generate-cards
 
 /** The card of the previous version for a feature, matched by name (like corrections and test questions). */
@@ -620,7 +670,8 @@ const generateCards = Effect.fn("understanding.generateCards")(
     const context = { phase: "generate-cards", jobId: job.id, snapshotId: job.snapshotId }
 
     const info = yield* understanding.snapshotInfo(job.snapshotId)
-    const { features } = yield* knowledge.featureMap(job.snapshotId)
+    // Features the triage found only technical get no card (a reviewer can still ask for one).
+    const features = (yield* knowledge.featureMap(job.snapshotId)).features.filter((feature) => !feature.technical)
     const pending = features.filter((feature) => feature.card === null)
     const sources = yield* loadCardSources(job.snapshotId)
     // Reviewer corrections survive regenerations: they go into the prompt of their feature's card.
@@ -827,6 +878,7 @@ export const understandingPipeline: Pipeline<
     { name: "summarize-files", run: ({ job, progress }) => summarizeFiles(job, progress) },
     { name: "summarize-modules", run: ({ job, progress }) => summarizeModules(job, progress) },
     { name: "map-features", run: ({ job, progress }) => mapFeatures(job, progress) },
+    { name: "classify-features", run: ({ job, progress }) => classifyFeatures(job, progress) },
     { name: "generate-cards", run: ({ job, progress }) => generateCards(job, progress) },
     { name: "verify-cards", run: ({ job, progress }) => verifyCards(job, progress) },
     { name: "finalize", run: ({ job }) => finalize(job) }

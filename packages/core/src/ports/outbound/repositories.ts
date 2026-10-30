@@ -414,6 +414,15 @@ export class KnowledgeRepository extends Context.Service<
       provenance: Provenance
     ): Effect.Effect<void, DatabaseError>
     featureMap(id: SnapshotId): Effect.Effect<FeatureMap, DatabaseError>
+    /** Stores the triage of the features: `technical` ones get no card. */
+    classifyFeatures(
+      id: SnapshotId,
+      triage: ReadonlyArray<{
+        readonly featureId: string
+        readonly userFacing: number | null
+        readonly technical: boolean
+      }>
+    ): Effect.Effect<void, DatabaseError>
     /** Replaces the card of a feature (its verification goes with it); returns the new version number. */
     saveCard(id: SnapshotId, card: NewCard, provenance: Provenance): Effect.Effect<number, DatabaseError>
     getCard(id: SnapshotId, cardId: string): Effect.Effect<CardView, NotFoundError | DatabaseError>

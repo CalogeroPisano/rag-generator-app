@@ -153,6 +153,8 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 description: feature.description,
                 files: feature.files,
                 symbols: feature.symbols,
+                userFacing: feature.userFacing,
+                technical: feature.technical,
                 cardId: card.id,
                 cardStatus: card.status,
                 cardChange: card.change,
@@ -192,6 +194,8 @@ export const KnowledgeRepositoryLive = Layer.effect(
             description: row.description,
             files: row.files,
             symbols: row.symbols,
+            userFacing: row.userFacing,
+            technical: row.technical,
             card:
               row.cardId === null
                 ? null
@@ -208,6 +212,18 @@ export const KnowledgeRepositoryLive = Layer.effect(
           orphanCorrections: orphans.map((row) => correctionView(row.correction))
         })
       }),
+
+      classifyFeatures: (id, triage) =>
+        query("knowledge.classifyFeatures", () =>
+          db.transaction(async (tx) => {
+            for (const item of triage) {
+              await tx
+                .update(feature)
+                .set({ userFacing: item.userFacing, technical: item.technical })
+                .where(and(eq(feature.snapshotId, id), eq(feature.id, item.featureId)))
+            }
+          })
+        ),
 
       saveCard: (id, newCard, provenance) =>
         query("knowledge.saveCard", () =>

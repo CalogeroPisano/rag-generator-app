@@ -101,6 +101,7 @@ services:
       DECISION_CONTEXT_TOKENS: ${DECISION_CONTEXT_TOKENS:-12000}
       VERIFY_SUPPORTED_THRESHOLD: ${VERIFY_SUPPORTED_THRESHOLD:-0.7}
       VERIFY_UNSUPPORTED_THRESHOLD: ${VERIFY_UNSUPPORTED_THRESHOLD:-0.3}
+      TRIAGE_USER_FACING_THRESHOLD: ${TRIAGE_USER_FACING_THRESHOLD:-0.4}
     # Lets AI_BASE_URL point to an Ollama running on the host: http://host.docker.internal:11434/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"

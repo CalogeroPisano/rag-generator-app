@@ -4,6 +4,7 @@ import {
   KnowledgeRepository,
   type OutputSchema,
   ProjectRepository,
+  SnapshotRepository,
   type DecisionRequest,
   type StructuredRequest
 } from "@code-to-rag/core/outbound"
@@ -103,6 +104,60 @@ describe.skipIf(url === undefined)("card review (PostgreSQL)", () => {
     const cardId = map.features.find((f) => f.id === featureId)!.card!.id
     return run(KnowledgeRepository.use((k) => k.getCard(snapshotId, cardId)))
   }
+
+  it("writes no card for a technical feature until a reviewer asks for one", async () => {
+    respond = (request) =>
+      request.prompt.id === "feature-map"
+        ? {
+            features: [
+              {
+                name: "Orders",
+                description: "Create orders.",
+                files: ["web/src/orders/service.ts"],
+                symbols: ["OrderService.create"]
+              },
+              {
+                name: "Build setup",
+                description: "Configuration of the build.",
+                files: ["config/app.json"],
+                symbols: []
+              }
+            ]
+          }
+        : defaultRespond(request)
+    decide = (request) =>
+      request.prompt.id === "feature-triage"
+        ? { user_facing: request.state.includes("Build setup") ? 0.1 : 0.85 }
+        : defaultDecide(request)
+    const { snapshotId } = await understood()
+    const features = async () => (await run(KnowledgeRepository.use((k) => k.featureMap(snapshotId)))).features
+
+    expect((await features()).map((f) => [f.name, f.technical, f.userFacing, f.card !== null])).toEqual([
+      ["Orders", false, 0.85, true],
+      ["Build setup", true, 0.1, false]
+    ])
+    const cardPrompts = () =>
+      requests.filter((r) => r.prompt.id === "card").map((r) => /^Feature: (.+)$/m.exec(r.input)?.[1])
+    expect(cardPrompts()).toEqual(["Orders"])
+    const { snapshot } = await run(SnapshotRepository.use((s) => s.get(snapshotId)))
+    expect(snapshot).toMatchObject({ featureCount: 2, cardCount: 1 })
+
+    // The reviewer decides it belongs in the documentation: a card job writes and verifies it.
+    const buildSetup = (await features()).find((f) => f.name === "Build setup")!
+    const job = await run(Knowledge.requestFeatureCard(snapshotId, buildSetup.id))
+    expect(job).toMatchObject({
+      type: "card",
+      payload: { cardId: null, featureId: buildSetup.id, operation: "generate" }
+    })
+    expect((await features()).find((f) => f.id === buildSetup.id)?.technical).toBe(false)
+    expect((await runClaimed()).status).toBe("succeeded")
+    expect(cardPrompts()).toEqual(["Orders", "Build setup"])
+    const generated = (await features()).find((f) => f.id === buildSetup.id)!
+    expect(generated.card?.status).toBe("flagged")
+    // Asking again for a feature that has a card is refused.
+    const again = await run(Effect.flip(Knowledge.requestFeatureCard(snapshotId, buildSetup.id)))
+    expect(again._tag).toBe("InvalidInputError")
+  })
 
   it("verifies a card on demand and keeps review decisions", async () => {
     const { snapshotId, featureId, cardId } = await understood()

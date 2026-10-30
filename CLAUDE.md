@@ -102,7 +102,9 @@ inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
 2. `understandingPipeline` (`core/src/application/understanding/pipeline.ts`): `prepare` (reset rag data) → `summarize-files`
    (code without tests + config files; large files split by `splitIntoParts`, then rolled up) → `summarize-modules`
    (`planModules`, bottom-up) → `map-features` (batched by token budget, `normalizeFeatures` / `mergeFeatures`) →
-   `generate-cards` (`buildCardExcerpts`, `checkReferences`) → `finalize`. Summary/card phases skip stored items
+   `classify-features` (decision model, prompt `feature-triage`: "would the user documentation describe this feature?";
+   below `TRIAGE_USER_FACING_THRESHOLD` → `feature.technical`, no card; a feature with a card in the update base keeps
+   one) → `generate-cards` (non-technical features; `buildCardExcerpts`, `checkReferences`) → `finalize`. Summary/card phases skip stored items
    (resumable); an answer still invalid after the correction request skips the item.
 3. `LanguageModel.generateObject`: AI SDK `streamText` (always streamed, over undici's `fetch` with no headers/body
    timeout: `adapters/outbound/openai/src/fetch.ts`) + `Output.object(jsonSchema(Schema.toJsonSchemaDocument))`, text parsed at the end,
@@ -124,7 +126,8 @@ inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
    `card-missing`, user's choice: the decision model cannot list them). → `rag.card_verification` (per card version,
    `model` = "decision + language"); `saveVerification` moves only `generated`↔`flagged`.
 2. Card operations needing a model are `card` jobs (`core/src/application/review.ts`, `cardPipeline`, single phase `process`):
-   `job.payload` = `{ cardId, featureId, operation: verify|regenerate|correct }`, `dedupe_key` = feature id. The card is
+   `job.payload` = `{ cardId, featureId, operation: verify|regenerate|correct|generate }` (`generate`: first card of a
+   feature without one, `requestFeatureCard`, "Genera la scheda"; cardId null), `dedupe_key` = feature id. The card is
    looked up by feature (regeneration replaces the card row; `saveCard` continues the version number).
 3. Corrections (`rag.correction`) belong to project + normalized feature name (`featureKey`), are passed to every
    card prompt of the feature and re-attached by `reattachCorrections` after `replaceFeatures`. Manual edits
@@ -301,8 +304,9 @@ of every new dependency before adding it.
   API, for the statements; required, no fallback to the language model. Missing items stay with the language model
   (`card-missing`, user's choice; a yes/no "anything missing?" question to d1-omni answered at random). Measured on
   the dev project (8 cards, 103 statements): statements 37 min with qwen3:4b → about 30 s; whole verification with
-  `card-missing` on qwen3:4b (GTX 1050 Ti) about 60–120 s per card instead of about 220 s. Feature triage before cards and file triage before summaries (points 2 and 3) are pending
-  the user's feedback.
+  `card-missing` on qwen3:4b (GTX 1050 Ti) about 60–120 s per card instead of about 220 s. Feature triage before the cards (point 2, user's choice): technical features get no card,
+  reviewers can generate it; on the dev project the 2 technical features of 8 (React bootstrap 0.12, Jest setup 0.27)
+  fall below 0.4, user-level ones score 0.63–0.89. File triage before summaries (point 3) is pending.
 - Phase 7 (user's choices): export only, no import; everything of the version in use including embeddings; scope
   chosen at every export (all but excluded / approved only); SQL with the same `rag` schema (re-runnable, replaces the
   project's rows); direct streamed download, no job.

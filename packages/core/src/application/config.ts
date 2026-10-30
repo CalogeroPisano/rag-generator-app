@@ -15,6 +15,11 @@ export interface AppConfigShape {
     /** A statement below this probability is unsupported (in between: partial). */
     readonly unsupported: number
   }
+  /** Triage of the features before the cards. */
+  readonly triage: {
+    /** A feature below this probability of being described by the user documentation gets no card. */
+    readonly userFacing: number
+  }
   readonly rag: {
     /** Cards given to the chat model per question. */
     readonly topCards: number
@@ -57,6 +62,9 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()("cod
         verification: {
           supported: yield* probability("VERIFY_SUPPORTED_THRESHOLD", 0.7),
           unsupported: yield* probability("VERIFY_UNSUPPORTED_THRESHOLD", 0.3)
+        },
+        triage: {
+          userFacing: yield* probability("TRIAGE_USER_FACING_THRESHOLD", 0.4)
         },
         rag: {
           topCards: yield* Config.Int("RAG_TOP_CARDS").pipe(Config.withDefault(5)),

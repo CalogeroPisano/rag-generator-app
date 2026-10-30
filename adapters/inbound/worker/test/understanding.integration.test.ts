@@ -104,6 +104,7 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
       "summarize-files",
       "summarize-modules",
       "map-features",
+      "classify-features",
       "generate-cards",
       "verify-cards",
       "finalize"

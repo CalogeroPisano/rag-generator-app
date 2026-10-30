@@ -118,6 +118,10 @@ export const feature = rag.table(
       .default(sql`'{}'::text[]`),
     /** Involved declarations: `[{ path, qualifiedName }]`. */
     symbols: jsonb("symbols").$type<Array<{ path: string; qualifiedName: string }>>().notNull().default([]),
+    /** Probability (decision model) that the user documentation would describe the feature; null before the triage. */
+    userFacing: doublePrecision("user_facing"),
+    /** Only technical: no card is generated unless a reviewer asks for one. */
+    technical: boolean("technical").default(false).notNull(),
     promptVersion: integer("prompt_version").notNull(),
     model: text("model").notNull(),
     createdAt: createdAt()

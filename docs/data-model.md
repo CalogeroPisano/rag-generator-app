@@ -265,6 +265,8 @@ erDiagram
     text description
     text_array files
     jsonb symbols "[{path, qualifiedName}]"
+    float8 user_facing
+    bool technical
   }
   card {
     uuid id PK
@@ -369,6 +371,9 @@ erDiagram
   }
 ```
 
+- **feature.user_facing** is the probability (decision model, `classify-features`) that the user documentation would
+  describe the feature; **feature.technical** marks features below the threshold, which get no card unless a reviewer
+  asks for one ("Genera la scheda" sets it back to false).
 - **card.content** is the structured card (`CardContent` in `packages/core/src/domain/card.ts`): title, summary and the
   sections `behavior`, `configuration`, `parameters`, `limits`, `validationRules`, `errors`; every item carries its
   references. **card_reference** holds one row per cited range, for queries by file.

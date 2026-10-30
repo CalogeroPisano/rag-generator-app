@@ -21,6 +21,14 @@ export const startCardOperation = createServerFn({ method: "POST" })
     runEffect(Knowledge.requestCardOperation(data.snapshotId, data.cardId, data.operation).pipe(Effect.map(encodeJob)))
   )
 
+/** First card of a feature the triage found only technical (worker job). */
+export const startFeatureCard = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(validate(Schema.Struct({ snapshotId: SnapshotId, featureId: Schema.String.check(Schema.isUUID()) })))
+  .handler(({ data }) =>
+    runEffect(Knowledge.requestFeatureCard(data.snapshotId, data.featureId).pipe(Effect.map(encodeJob)))
+  )
+
 /** Assisted correction: the reviewer's text is stored (it survives regenerations) and the card is rewritten. */
 export const submitCorrection = createServerFn({ method: "POST" })
   .middleware([authMiddleware])

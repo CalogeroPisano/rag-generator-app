@@ -41,6 +41,15 @@ import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { requestIndexing } from "./rag/indexing.ts"
 import { ensureNotUpdating } from "./updates.ts"
 
+/** A feature of the map. */
+const featureById = Effect.fnUntraced(function* (snapshotId: SnapshotId, featureId: string) {
+  const knowledge = yield* KnowledgeRepository
+  const { features } = yield* knowledge.featureMap(snapshotId)
+  const feature = features.find((f) => f.id === featureId)
+  if (feature === undefined) return yield* new NotFoundError({ entity: "feature", id: featureId })
+  return feature
+})
+
 /** The feature of a card job and its current card (looked up by feature: regeneration replaces the card id). */
 const featureWithCard = Effect.fnUntraced(function* (snapshotId: SnapshotId, featureId: string) {
   const knowledge = yield* KnowledgeRepository
@@ -65,26 +74,34 @@ const verifyStored = Effect.fnUntraced(function* (context: CallContext, featureI
   )
 })
 
-/** Writes a new version of the card of a feature (from scratch or from the current one), then verifies it. */
+/**
+ * Writes a new version of the card of a feature (from scratch or from the current one), or its first card when the
+ * triage left it without one, then verifies it.
+ */
 const rewrite = Effect.fnUntraced(function* (
   context: CallContext,
   featureId: string,
   sources: CardSources,
-  options: { readonly fromCurrent: boolean }
+  options: { readonly fromCurrent: boolean; readonly first?: boolean }
 ) {
   const knowledge = yield* KnowledgeRepository
   const understanding = yield* UnderstandingRepository
   const model = yield* LanguageModel
-  const { card } = yield* featureWithCard(context.snapshotId, featureId)
+  const { feature, current } =
+    options.first === true
+      ? { feature: yield* featureById(context.snapshotId, featureId), current: null }
+      : yield* featureWithCard(context.snapshotId, featureId).pipe(
+          Effect.map(({ card }) => ({ feature: card.feature, current: card.content }))
+        )
   const corrections = (yield* knowledge.corrections(context.snapshotId)).filter((c) => c.featureId === featureId)
-  const checked = yield* writeCard(context, card.feature, sources, {
-    current: options.fromCurrent ? card.content : null,
+  const checked = yield* writeCard(context, feature, sources, {
+    current: options.fromCurrent ? current : null,
     corrections: corrections.map((c) => c.text)
   })
   if (checked === undefined) {
     return yield* new PhaseError({
       phase: context.phase,
-      message: "Nessun file della funzionalità è disponibile per riscrivere la scheda",
+      message: "Nessun file della funzionalità è disponibile per scrivere la scheda",
       retryable: false
     })
   }
@@ -131,6 +148,9 @@ const processCardJob = Effect.fn("review.processCardJob")(
         break
       case "correct":
         yield* rewrite(context, payload.featureId, sources, { fromCurrent: true })
+        break
+      case "generate":
+        yield* rewrite(context, payload.featureId, sources, { fromCurrent: false, first: true })
     }
     // The new version replaces the old one in the chat's index.
     yield* requestIndexing(job.snapshotId)
@@ -187,6 +207,36 @@ export const requestCardOperation = Effect.fn("requestCardOperation")(function* 
     maxAttempts: config.jobMaxAttempts,
     payload: { cardId, featureId: card.feature.id, operation } satisfies CardJobPayload,
     dedupeKey: card.feature.id
+  })
+})
+
+/**
+ * First card of a feature the triage found only technical: the reviewer decides it belongs in the documentation.
+ * The feature stops being technical and a card job writes and verifies its card.
+ */
+export const requestFeatureCard = Effect.fn("requestFeatureCard")(function* (
+  snapshotId: SnapshotId,
+  featureId: string
+) {
+  const config = yield* AppConfig
+  const jobs = yield* JobRepository
+  const knowledge = yield* KnowledgeRepository
+  const snapshots = yield* SnapshotRepository
+  const { snapshot } = yield* snapshots.get(snapshotId)
+  yield* ensureNoUnderstanding(snapshot.projectId)
+  const feature = yield* featureById(snapshotId, featureId)
+  if (feature.card !== null) {
+    return yield* new InvalidInputError({ message: "La funzionalità ha già una scheda" })
+  }
+  yield* knowledge.classifyFeatures(snapshotId, [{ featureId, userFacing: feature.userFacing, technical: false }])
+  return yield* jobs.enqueue({
+    id: JobId.make(crypto.randomUUID()),
+    type: "card",
+    projectId: snapshot.projectId,
+    snapshotId,
+    maxAttempts: config.jobMaxAttempts,
+    payload: { cardId: null, featureId, operation: "generate" } satisfies CardJobPayload,
+    dedupeKey: featureId
   })
 })
 
