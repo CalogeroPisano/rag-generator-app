@@ -6,7 +6,7 @@
 import { CARD } from "./prompts/card.ts"
 import { CARD_VERIFY, cardStatements } from "./prompts/verify.ts"
 import { type CardContent } from "../domain/card.ts"
-import { DecisionModel, type EmbeddingModel, LanguageModel } from "../ports/outbound/models.ts"
+import { DecisionModel, LanguageModel } from "../ports/outbound/models.ts"
 import { Effect } from "effect"
 import { UploadStore } from "../ports/outbound/source.ts"
 import { AppConfig } from "./config.ts"
@@ -41,6 +41,7 @@ import { checkReferences } from "./understanding/references.ts"
 import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { requestIndexing } from "./rag/indexing.ts"
 import { carryStatementReviews } from "./statement-reviews.ts"
+import { ModelRegistry, withDecisionModel, withLanguageModel } from "./models.ts"
 import { ensureNotUpdating } from "./updates.ts"
 
 /** A feature of the map. */
@@ -161,17 +162,20 @@ const processCardJob = Effect.fn("review.processCardJob")(
 )
 
 export const cardPipeline: Pipeline<
-  | AppConfig
-  | DecisionModel
-  | EmbeddingModel
-  | JobRepository
-  | KnowledgeRepository
-  | LanguageModel
-  | SnapshotRepository
-  | UnderstandingRepository
+  AppConfig | JobRepository | KnowledgeRepository | ModelRegistry | SnapshotRepository | UnderstandingRepository
 > = {
   type: "card",
-  phases: [{ name: "process", run: ({ job }) => processCardJob(job) }],
+  phases: [
+    {
+      name: "process",
+      run: ({ job }) =>
+        processCardJob(job).pipe(
+          withLanguageModel("cards"),
+          withDecisionModel,
+          Effect.mapError(toPhaseError("process"))
+        )
+    }
+  ],
   // The card keeps its previous version: nothing to undo.
   onFailed: () => Effect.void
 }

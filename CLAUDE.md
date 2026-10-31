@@ -44,8 +44,9 @@ packages/core            the hexagon (Effect only: no node:*, no other package; 
                            loop operations, pipeline dispatch), prompts/, config (AppConfig), pipeline runner
   src/ports/inbound/       API of the use cases, one namespace per area: Projects, Jobs, Analysis, Knowledge, Rag,
                            Evaluation, Export (`import { Projects } from "@code-to-rag/core"`)
-  src/ports/outbound/      repositories.ts, models.ts (LanguageModel, DecisionModel, EmbeddingModel, ModelCallRecorder,
-                           AiError),
+  src/ports/outbound/      repositories.ts (incl. SettingsRepository, UserRepository), models.ts (LanguageModel,
+                           DecisionModel, EmbeddingModel = the models in use, provided by core; *ModelFactory = what
+                           adapters implement; ModelCallRecorder, AiError),
                            source.ts (UploadStore, SourceWorkspace), code-analyzer.ts, archive.ts (ZipArchive),
                            secret-box.ts, job-events.ts (JobEventsListener)
   entry points             "." (index.ts: domain + inbound namespaces + AppConfig), "./outbound" (outbound.ts:
@@ -55,10 +56,10 @@ adapters/inbound/web     @code-to-rag/web: TanStack Start routes, server functio
 adapters/inbound/worker  @code-to-rag/worker: job loop over Jobs.*; composition in src/main.ts; migrate command
 adapters/outbound/postgres    @code-to-rag/postgres: Drizzle schema + migrations, RepositoriesLive,
                               ModelCallRecorderLive, JobEventsListenerLive, SecretBoxLive (AES-256-GCM), testing
-adapters/outbound/openai      @code-to-rag/openai: LanguageModelLive / EmbeddingModelLive (AI SDK +
-                              OpenAI-compatible provider, undici fetch), AiConfig
-adapters/outbound/ollama      @code-to-rag/ollama: DecisionModelLive (Ollama System One API `/v1/systemone`, undici
-                              fetch, yes/no probabilities), DecisionConfig (DECISION_*)
+adapters/outbound/openai      @code-to-rag/openai: LanguageModelFactoryLive / EmbeddingModelFactoryLive (AI SDK +
+                              OpenAI-compatible provider, undici fetch)
+adapters/outbound/ollama      @code-to-rag/ollama: DecisionModelFactoryLive (Ollama System One API `/v1/systemone`,
+                              undici fetch, yes/no probabilities)
 adapters/outbound/filesystem  @code-to-rag/filesystem: StorageConfig (DATA_DIR) + FileAdaptersLive (UploadStore,
                               SourceWorkspace: zip extraction, isomorphic-git, tree scan), CodeAnalyzerLive
                               (tree-sitter, ANALYZER_VERSION), ZipArchiveLive (fflate)
@@ -70,6 +71,19 @@ other. A new external dependency of a use case = a new outbound port + a `Layer`
 operation for the pages = a use case in `application/` exposed by an inbound port module. Ports are
 `Context.Service` tags without a default layer; adapters export `…Live` layers. In development web and worker run
 inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
+
+### Model settings
+
+Models are configured on the settings page (`/settings`, `Settings.*`, administrators only: `app_admin`, or the
+oldest account while none is granted; `ForbiddenError` from core). `model_settings` (one row): connections
+(OpenAI-compatible, presets OpenRouter/Gemini/OpenAI/Mistral/Groq/Ollama/vLLM/custom), a model per group of tasks
+(`ModelTask`: summaries, cards, chat), embedding, decision model; API keys sealed with `SecretBox` (context
+`model-connection:<id>`), never returned. No row → `AppConfig.models` (AI__, EMBEDDING__, DECISION_* =
+initial values; `model-defaults.ts`). `ModelRegistry` (core, `application/models.ts`) resolves and caches the
+models (re-checks `updated_at` every 5 s) and builds them with the adapters' factories; code runs inside
+`withLanguageModel(task)` / `withEmbeddingModel` / `withDecisionModel` (phases: summaries = summarize-files/modules;
+cards = map-features, generate-cards, verify-cards, card jobs, test questions; chat = chat and test runs).
+Composition roots provide `ModelRegistry.layer` + factories, never the models themselves.
 
 ### Data flow (phase 1)
 
@@ -317,6 +331,10 @@ of every new dependency before adding it.
   fall below 0.4, user-level ones score 0.63–0.89. File triage before summaries (point 3, user's choice): fixed rules only, no model
   (exact matches: comments only, imports/re-exports only, TS type definitions only); measured 15 of 226 files of
   this repository (all barrels), 1 of 10 on the dev project (`setupTests.js`).
+- Settings page (user's choices): administrators only (first account, then granted ones); OpenAI-compatible
+  connections only (no native SDKs: OpenRouter, Gemini's OpenAI endpoint…); one model per group of tasks
+  (summaries, cards, chat) + embedding + decision model; environment variables are initial values until the first
+  save.
 - Phase 7 (user's choices): export only, no import; everything of the version in use including embeddings; scope
   chosen at every export (all but excluded / approved only); SQL with the same `rag` schema (re-runnable, replaces the
   project's rows); direct streamed download, no job.

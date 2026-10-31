@@ -5,6 +5,7 @@
 import type { CodeSymbol, DependencyTarget, RawImport, ResolverInput } from "../../domain/code.ts"
 import type { PreparedFile } from "../../domain/source/prepare.ts"
 import type { CardContent } from "../../domain/card.ts"
+import type { ModelSettingsBody, UserEntry } from "../../domain/settings.ts"
 import { Context, type Effect, type Option, type Scope } from "effect"
 import type {
   AnalysisStatus,
@@ -758,3 +759,35 @@ export class ExportRepository extends Context.Service<
     open(scope: ExportScope): Effect.Effect<ExportReader, DatabaseError, Scope.Scope>
   }
 >()("code-to-rag/core/ExportRepository") {}
+
+// ── Settings and administrators ─────────────────────────────────────────────
+
+export interface StoredModelSettings {
+  readonly body: ModelSettingsBody
+  /** API keys sealed with `SecretBox` (context `model-connection:<id>`), by connection id. */
+  readonly sealedKeys: Readonly<Record<string, string>>
+  readonly updatedAt: Date
+  readonly updatedBy: string
+}
+
+export class SettingsRepository extends Context.Service<
+  SettingsRepository,
+  {
+    /** The saved model settings; none until an administrator saves them (the environment applies). */
+    loadModelSettings(): Effect.Effect<Option.Option<StoredModelSettings>, DatabaseError>
+    /** Time of the last save: a cheap check for changes made by another process. */
+    modelSettingsVersion(): Effect.Effect<Option.Option<Date>, DatabaseError>
+    saveModelSettings(settings: StoredModelSettings): Effect.Effect<void, DatabaseError>
+  }
+>()("code-to-rag/core/SettingsRepository") {}
+
+export class UserRepository extends Context.Service<
+  UserRepository,
+  {
+    /** Every account, oldest first, with its administrator flag. */
+    list(): Effect.Effect<ReadonlyArray<UserEntry>, DatabaseError>
+    /** Administrators are the granted accounts; while none is granted, the oldest account is. */
+    isAdmin(userId: string): Effect.Effect<boolean, DatabaseError>
+    setAdmin(userId: string, admin: boolean, grantedBy: string): Effect.Effect<void, NotFoundError | DatabaseError>
+  }
+>()("code-to-rag/core/UserRepository") {}

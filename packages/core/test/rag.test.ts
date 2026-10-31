@@ -1,6 +1,6 @@
 import { type CardContent } from "../src/domain/card.ts"
 import { AiError, type TextRequest } from "../src/ports/outbound/models.ts"
-import { hashEmbedding, scriptedEmbeddingModel, scriptedLanguageModel } from "../src/testing.ts"
+import { hashEmbedding, scriptedEmbeddingModel, scriptedLanguageModel, scriptedModelRegistry } from "../src/testing.ts"
 import { citedSources } from "../src/application/prompts/chat.ts"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
@@ -246,14 +246,11 @@ const makeLayer = (options: {
   const config = AppConfig.layer.pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: options.env ?? {} })))
   )
-  return Layer.mergeAll(
-    index,
-    chat,
-    projects,
-    config,
+  const models = Layer.mergeAll(
     scriptedEmbeddingModel(),
     scriptedLanguageModel(() => ({}), { respondText: options.respondText })
   )
+  return Layer.mergeAll(index, chat, projects, config, scriptedModelRegistry.pipe(Layer.provideMerge(models)))
 }
 
 describe("prepareAnswer", () => {

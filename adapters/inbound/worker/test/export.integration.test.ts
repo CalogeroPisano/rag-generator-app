@@ -12,7 +12,12 @@ import {
   UploadId
 } from "@code-to-rag/core"
 import { EXPORT_TABLES, JobRepository, KnowledgeRepository } from "@code-to-rag/core/outbound"
-import { scriptedDecisionModel, scriptedEmbeddingModel, scriptedLanguageModel } from "@code-to-rag/core/testing"
+import {
+  scriptedDecisionModel,
+  scriptedEmbeddingModel,
+  scriptedLanguageModel,
+  scriptedModelRegistry
+} from "@code-to-rag/core/testing"
 import { Database } from "@code-to-rag/postgres"
 import { makeTestDatabaseLayer, resetDatabase, testDatabaseUrl } from "@code-to-rag/postgres/testing"
 import { Effect, Layer, ManagedRuntime, Option } from "effect"
@@ -40,26 +45,32 @@ const pricesCard: CardContent = {
 }
 
 const makeLayer = (databaseUrl: string) =>
-  Layer.mergeAll(
-    testAdapters,
-    scriptedEmbeddingModel(),
-    scriptedLanguageModel((request) => {
-      switch (request.prompt.id) {
-        case "feature-map":
-          return {
-            features: [
-              { name: "Orders", description: "Create orders.", files: ["web/src/orders/service.ts"], symbols: [] },
-              { name: "Prices", description: "Format prices.", files: ["web/src/lib/money.ts"], symbols: [] }
-            ]
+  scriptedModelRegistry.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        testAdapters,
+        scriptedEmbeddingModel(),
+        scriptedLanguageModel((request) => {
+          switch (request.prompt.id) {
+            case "feature-map":
+              return {
+                features: [
+                  { name: "Orders", description: "Create orders.", files: ["web/src/orders/service.ts"], symbols: [] },
+                  { name: "Prices", description: "Format prices.", files: ["web/src/lib/money.ts"], symbols: [] }
+                ]
+              }
+            case "card":
+              return /^Feature: Prices$/m.test(request.input) ? pricesCard : ordersCard
+            default:
+              return defaultRespond(request)
           }
-        case "card":
-          return /^Feature: Prices$/m.test(request.input) ? pricesCard : ordersCard
-        default:
-          return defaultRespond(request)
-      }
-    }),
-    scriptedDecisionModel()
-  ).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(makeTestDatabaseLayer(databaseUrl)))
+        }),
+        scriptedDecisionModel()
+      )
+    ),
+    Layer.provideMerge(AppConfig.layer),
+    Layer.provideMerge(makeTestDatabaseLayer(databaseUrl))
+  )
 type Services = Layer.Success<ReturnType<typeof makeLayer>>
 
 const reviewer = { id: "user-1", name: "Revisore" }

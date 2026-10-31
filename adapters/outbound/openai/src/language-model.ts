@@ -1,7 +1,8 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import {
   AiError,
-  LanguageModel,
+  type LanguageModelConfig,
+  LanguageModelFactory,
   type LanguageModelShape,
   type ModelCallContext,
   type ModelCallOutcome,
@@ -23,47 +24,47 @@ import {
   Output
 } from "ai"
 import { Cause, type Duration, Effect, Exit, Layer, Redacted, Schedule, Schema, Semaphore } from "effect"
-import { AiConfig, type AiConfigShape } from "./config.ts"
+import type { AiConfigShape } from "./config.ts"
 import { modelFetch } from "./fetch.ts"
 
 /**
- * Adapter of the `LanguageModel` port: AI SDK with the OpenAI-compatible provider, model from the `AI_*`
- * configuration. Without `AI_MODEL` every call fails with `not_configured`.
+ * Factory of the `LanguageModel` port: AI SDK with the OpenAI-compatible provider (OpenRouter, Gemini, OpenAI,
+ * Ollama, vLLM…), built from the configuration resolved by core. The provider is always created explicitly: a model
+ * id never resolves through the Vercel AI Gateway.
  */
-export const LanguageModelLive = Layer.effect(
-  LanguageModel,
+export const LanguageModelFactoryLive = Layer.effect(
+  LanguageModelFactory,
   Effect.gen(function* () {
-    const config = yield* AiConfig
-    if (config.model === undefined) return notConfigured(config)
-    const provider = createOpenAICompatible({
-      name: config.providerName,
-      baseURL: config.baseUrl,
-      ...(config.apiKey === undefined ? {} : { apiKey: Redacted.value(config.apiKey) }),
-      supportsStructuredOutputs: config.structuredOutputs,
-      includeUsage: true,
-      fetch: modelFetch
+    const recorder = yield* ModelCallRecorder
+    return LanguageModelFactory.of({
+      make: (config: LanguageModelConfig) => {
+        const provider = createOpenAICompatible({
+          name: config.connection.name,
+          baseURL: config.connection.baseUrl,
+          ...(config.connection.apiKey === undefined ? {} : { apiKey: Redacted.value(config.connection.apiKey) }),
+          supportsStructuredOutputs: config.connection.structuredOutputs,
+          includeUsage: true,
+          fetch: modelFetch
+        })
+        return makeLanguageModel({
+          model: provider.chatModel(config.model),
+          modelId: config.model,
+          config: {
+            providerName: config.connection.name,
+            timeout: config.policy.timeout,
+            maxRetries: config.policy.maxRetries,
+            concurrency: config.connection.concurrency,
+            contextTokens: config.contextTokens,
+            maxOutputTokens: config.maxOutputTokens,
+            chatMaxOutputTokens: config.chatMaxOutputTokens,
+            temperature: config.policy.temperature,
+            batchSize: 1
+          }
+        }).pipe(Effect.provideService(ModelCallRecorder, recorder))
+      }
     })
-    return yield* makeLanguageModel({ model: provider.chatModel(config.model), modelId: config.model, config })
   })
 )
-
-const notConfigured = (config: AiConfigShape): LanguageModelShape => {
-  const fail = Effect.fail(
-    new AiError({
-      kind: "not_configured",
-      message: "Modello IA non configurato (AI_MODEL)",
-      retryable: false
-    })
-  )
-  return {
-    modelId: undefined,
-    contextTokens: config.contextTokens,
-    maxOutputTokens: config.maxOutputTokens,
-    chatMaxOutputTokens: config.chatMaxOutputTokens,
-    generateObject: () => fail,
-    generateText: () => fail
-  }
-}
 
 /** Converts an Effect schema into the JSON Schema sent to the model. */
 export const toModelJsonSchema = (schema: Schema.Top): JSONSchema7 => {
@@ -348,12 +349,12 @@ export const makeLanguageModel = Effect.fnUntraced(function* (options: {
       })
     }).pipe(Effect.withSpan("ai.generateObject", { attributes: { task: request.prompt.id, model: modelId } }))
 
-  return LanguageModel.of({
+  return {
     modelId,
     contextTokens: config.contextTokens,
     maxOutputTokens: config.maxOutputTokens,
     chatMaxOutputTokens: config.chatMaxOutputTokens,
     generateObject,
     generateText
-  })
+  } satisfies LanguageModelShape
 })

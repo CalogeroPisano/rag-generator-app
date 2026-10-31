@@ -17,6 +17,7 @@ import {
   ProjectRepository
 } from "../../ports/outbound/repositories.ts"
 import { type RankedCard, retrieveCards } from "./retrieval.ts"
+import { withEmbeddingModel, withLanguageModel } from "../models.ts"
 
 /** Earlier exchanges of a conversation sent with a question, and their length. */
 const MAX_HISTORY_TURNS = 3
@@ -151,7 +152,7 @@ const turnsOf = (messages: ReadonlyArray<ChatMessage>): Array<ChatTurn> => {
  * streams the answer through `emit` and stores it with its sources. A client
  * that goes away interrupts the model call; the partial answer is kept.
  */
-export const askQuestion = Effect.fn("askQuestion")(function* (
+const askQuestionWithModels = Effect.fn("askQuestion")(function* (
   input: {
     readonly projectId: ProjectId
     readonly userId: UserId
@@ -252,3 +253,7 @@ export const askQuestion = Effect.fn("askQuestion")(function* (
     )
   )
 })
+
+/** One chat exchange, with the chat and embedding models in use (see `askQuestionWithModels`). */
+export const askQuestion = (...args: Parameters<typeof askQuestionWithModels>) =>
+  askQuestionWithModels(...args).pipe(withLanguageModel("chat"), withEmbeddingModel)

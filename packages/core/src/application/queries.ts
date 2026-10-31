@@ -4,7 +4,7 @@
  */
 import { Effect } from "effect"
 import type { ProjectId, SnapshotId, UserId } from "../domain/model.ts"
-import { EmbeddingModel, LanguageModel } from "../ports/outbound/models.ts"
+import { ModelRegistry } from "./models.ts"
 import {
   AnalysisRepository,
   ChatRepository,
@@ -61,14 +61,15 @@ export const getModelCallStats = (snapshotId: SnapshotId) =>
 
 /** Models the application can use (ids only: URLs and keys are details of the adapters). */
 export const getModelStatus = Effect.gen(function* () {
-  const chat = yield* LanguageModel
-  const embedding = yield* EmbeddingModel
+  const registry = yield* ModelRegistry
+  const chat = yield* registry.languageModel("chat")
+  const embedding = yield* registry.embeddingModel()
   return { chatModel: chat.modelId ?? null, embeddingModel: embedding.modelId ?? null }
 })
 
 /** State of the embedding index for the configured embedding model. */
 export const getIndexStatus = Effect.fn("getIndexStatus")(function* (snapshotId: SnapshotId) {
-  const model = (yield* EmbeddingModel).modelId
+  const model = (yield* (yield* ModelRegistry).embeddingModel()).modelId
   return yield* (yield* IndexRepository).status(
     snapshotId,
     model === undefined ? undefined : { model, formatVersion: CARD_CHUNK.version }

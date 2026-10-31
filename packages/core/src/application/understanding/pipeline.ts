@@ -39,7 +39,9 @@ import {
 } from "../prompts/summaries.ts"
 import { FEATURE_TRIAGE, renderFeatureTriage, USER_FACING_QUESTION, userFacingQuestion } from "../prompts/triage.ts"
 import { CARD_VERIFY } from "../prompts/verify.ts"
-import { DecisionModel, EmbeddingModel, LanguageModel } from "../../ports/outbound/models.ts"
+import { DecisionModel, LanguageModel } from "../../ports/outbound/models.ts"
+import { ModelRegistry, withDecisionModel, withLanguageModel } from "../models.ts"
+import type { DatabaseError } from "../../domain/errors.ts"
 import { Effect } from "effect"
 import { AppConfig } from "../config.ts"
 import { type CardStatus, type FeatureEntry, type Job, JobId, type SnapshotId } from "../../domain/model.ts"
@@ -116,6 +118,12 @@ const updateBase = Effect.fnUntraced(function* (job: Job) {
   return { baseId: payload.baseSnapshotId, changes, changed: changedPaths(changes) } satisfies UpdateBase
 })
 
+/** Maps the errors of resolving a phase's models (database) to the phase's error. */
+const inPhase =
+  (phase: string) =>
+  <A, R>(effect: Effect.Effect<A, PhaseError | DatabaseError, R>): Effect.Effect<A, PhaseError, R> =>
+    effect.pipe(Effect.mapError(toPhaseError(phase)))
+
 // ---------------------------------------------------------------------------
 // prepare
 
@@ -123,11 +131,14 @@ const prepare = Effect.fn("understanding.prepare")(
   function* (job: Job) {
     const understanding = yield* UnderstandingRepository
     const knowledge = yield* KnowledgeRepository
-    const model = yield* LanguageModel
-    if (model.modelId === undefined) {
+    // Summaries and cards may use different models: both must be configured before anything starts.
+    const registry = yield* ModelRegistry
+    const summaries = yield* registry.languageModel("summaries")
+    const model = yield* registry.languageModel("cards")
+    if (summaries.modelId === undefined || model.modelId === undefined) {
       return yield* new PhaseError({
         phase: "prepare",
-        message: "Modello IA non configurato (AI_MODEL)",
+        message: "Modello IA non configurato per riassunti o schede: impostalo nella pagina Impostazioni",
         retryable: false
       })
     }
@@ -877,12 +888,10 @@ const finalize = Effect.fn("understanding.finalize")(
 
 export const understandingPipeline: Pipeline<
   | AppConfig
-  | DecisionModel
-  | EmbeddingModel
   | EvaluationRepository
   | JobRepository
   | KnowledgeRepository
-  | LanguageModel
+  | ModelRegistry
   | ProjectRepository
   | SnapshotRepository
   | UnderstandingRepository
@@ -890,14 +899,37 @@ export const understandingPipeline: Pipeline<
 > = {
   type: "understanding",
   phases: [
-    { name: "prepare", run: ({ job }) => prepare(job) },
-    { name: "summarize-files", run: ({ job, progress }) => summarizeFiles(job, progress) },
-    { name: "summarize-modules", run: ({ job, progress }) => summarizeModules(job, progress) },
-    { name: "map-features", run: ({ job, progress }) => mapFeatures(job, progress) },
-    { name: "classify-features", run: ({ job, progress }) => classifyFeatures(job, progress) },
-    { name: "generate-cards", run: ({ job, progress }) => generateCards(job, progress) },
-    { name: "verify-cards", run: ({ job, progress }) => verifyCards(job, progress) },
-    { name: "finalize", run: ({ job }) => finalize(job) }
+    // Every phase runs with the models of its tasks, resolved from the settings when it starts.
+    { name: "prepare", run: ({ job }) => prepare(job).pipe(inPhase("prepare")) },
+    {
+      name: "summarize-files",
+      run: ({ job, progress }) =>
+        summarizeFiles(job, progress).pipe(withLanguageModel("summaries"), inPhase("summarize-files"))
+    },
+    {
+      name: "summarize-modules",
+      run: ({ job, progress }) =>
+        summarizeModules(job, progress).pipe(withLanguageModel("summaries"), inPhase("summarize-modules"))
+    },
+    {
+      name: "map-features",
+      run: ({ job, progress }) => mapFeatures(job, progress).pipe(withLanguageModel("cards"), inPhase("map-features"))
+    },
+    {
+      name: "classify-features",
+      run: ({ job, progress }) => classifyFeatures(job, progress).pipe(withDecisionModel, inPhase("classify-features"))
+    },
+    {
+      name: "generate-cards",
+      run: ({ job, progress }) =>
+        generateCards(job, progress).pipe(withLanguageModel("cards"), inPhase("generate-cards"))
+    },
+    {
+      name: "verify-cards",
+      run: ({ job, progress }) =>
+        verifyCards(job, progress).pipe(withLanguageModel("cards"), withDecisionModel, inPhase("verify-cards"))
+    },
+    { name: "finalize", run: ({ job }) => finalize(job).pipe(inPhase("finalize")) }
   ],
   onFailed: (job) =>
     UnderstandingRepository.use((repository) => repository.setStatus(job.snapshotId, "failed")).pipe(Effect.ignore)

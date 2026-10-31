@@ -1,7 +1,7 @@
-import { AiConfig, EmbeddingModelLive, LanguageModelLive } from "@code-to-rag/openai"
+import { EmbeddingModelFactoryLive, LanguageModelFactoryLive } from "@code-to-rag/openai"
 import { CodeAnalyzerLive, FileAdaptersLive, ZipArchiveLive } from "@code-to-rag/filesystem"
-import { DecisionConfig, DecisionModelLive } from "@code-to-rag/ollama"
-import { AppConfig } from "@code-to-rag/core"
+import { DecisionModelFactoryLive } from "@code-to-rag/ollama"
+import { AppConfig, ModelRegistry } from "@code-to-rag/core"
 import { DatabaseLive, SecretBoxLive } from "@code-to-rag/postgres"
 import { Config, Effect, Exit, Fiber, Layer, Logger } from "effect"
 import { randomUUID } from "node:crypto"
@@ -15,21 +15,20 @@ const LoggerLive = Layer.unwrap(
   })
 )
 
-// The model call log (ModelCallRecorder) is written by the database layer.
-const AiLive = Layer.mergeAll(
-  Layer.mergeAll(LanguageModelLive, EmbeddingModelLive).pipe(Layer.provide(AiConfig.layer)),
-  DecisionModelLive.pipe(Layer.provide(DecisionConfig.layer))
+// Models come from the settings page (or the environment until it is saved): the registry resolves them and the
+// model adapters build them. The model call log (ModelCallRecorder) is written by the database layer.
+const ModelsLive = ModelRegistry.layer.pipe(
+  Layer.provide(Layer.mergeAll(LanguageModelFactoryLive, EmbeddingModelFactoryLive, DecisionModelFactoryLive))
 )
 
-// The use cases of core run on the adapters: Postgres (repositories, secret encryption), the model endpoint,
-// the decision model (Ollama), the local file system (uploads, work areas) and tree-sitter.
-const WorkerLive = Layer.mergeAll(
-  SecretBoxLive,
-  CodeAnalyzerLive,
-  FileAdaptersLive,
-  ZipArchiveLive,
-  AiLive.pipe(Layer.provideMerge(DatabaseLive))
-).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(LoggerLive))
+// The use cases of core run on the adapters: Postgres (repositories, settings, secret encryption), the model
+// endpoints, the local file system (uploads, work areas) and tree-sitter.
+const WorkerLive = Layer.mergeAll(CodeAnalyzerLive, FileAdaptersLive, ZipArchiveLive, ModelsLive).pipe(
+  Layer.provideMerge(SecretBoxLive),
+  Layer.provideMerge(DatabaseLive),
+  Layer.provideMerge(AppConfig.layer),
+  Layer.provideMerge(LoggerLive)
+)
 
 const workerId = `${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`
 

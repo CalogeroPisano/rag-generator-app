@@ -1,4 +1,5 @@
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
+import { ModelRegistry } from "./application/models.ts"
 import {
   AiError,
   DecisionModel,
@@ -118,3 +119,28 @@ export const scriptedEmbeddingModel = (
 
 // Output schema of a real prompt, for tests that call the language model port directly.
 export { RollupOutput } from "./application/prompts/summaries.ts"
+
+/**
+ * Model registry of the tests: every group of tasks uses the scripted models in the context (`scriptedLanguageModel`,
+ * `scriptedEmbeddingModel`, `scriptedDecisionModel`); a missing one behaves as not configured.
+ */
+export const scriptedModelRegistry = Layer.effect(
+  ModelRegistry,
+  Effect.gen(function* () {
+    const language = yield* Effect.serviceOption(LanguageModel)
+    const embedding = yield* Effect.serviceOption(EmbeddingModel)
+    const decision = yield* Effect.serviceOption(DecisionModel)
+    const missing = (name: string) => Effect.die(new Error(`No scripted ${name} in the test layer`))
+    return ModelRegistry.of({
+      current: () => Effect.die(new Error("Model settings are not available in tests")),
+      languageModel: () => Option.match(language, { onNone: () => missing("language model"), onSome: Effect.succeed }),
+      embeddingModel: () =>
+        Option.match(embedding, {
+          onNone: () => Effect.succeed({ modelId: undefined, embed: () => Effect.die(new Error("no embeddings")) }),
+          onSome: Effect.succeed
+        }),
+      decisionModel: () => Option.match(decision, { onNone: () => missing("decision model"), onSome: Effect.succeed }),
+      invalidate: () => Effect.void
+    })
+  })
+)

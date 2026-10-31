@@ -57,6 +57,9 @@ Commercially distributable product, installed **on premise** with Docker Compose
   table, or a SQL script that creates the `rag` schema in another PostgreSQL (with pgvector) and replaces the
   project's data there. Cards, features, references, verifications, corrections, test questions and runs, summaries
   and the embedding index are included, every card except excluded ones or approved ones only; never the source code.
+- **Model settings page** (administrators): OpenAI-compatible connections (OpenRouter, Google Gemini, OpenAI, Mistral,
+  Groq, Ollama, vLLM…) with encrypted API keys, a model for summaries, cards and chat, embedding and decision model;
+  the environment variables only give the initial values.
 - **Project deletion**, with everything it produced (knowledge base, index, tests and conversations included).
 - **Model call log**: phase, model, duration, tokens and outcome of every call, never the code.
 - **Web interface**: login, project list, new project, job progress, file tree with exclusions, code viewer
@@ -77,10 +80,11 @@ docker compose up -d --build
 Open http://localhost:3000: the first account created is the administrator. Further sign-ups are disabled unless
 `AUTH_ALLOW_SIGNUP=true`.
 
-AI understanding needs a model: set `AI_MODEL` (and `AI_BASE_URL` if the model is not served by the bundled Ollama).
-The chat also needs an embedding model: `EMBEDDING_MODEL` (multilingual, e.g. `bge-m3`). The card verification needs
-the decision model `d1-omni` (`DECISION_MODEL`; LFM Open License, see [Licenses](docs/licenses.md#decision-model)).
-With the bundled Ollama:
+After the first login, configure the models on the **Impostazioni** page: OpenRouter, Google Gemini, OpenAI, Ollama,
+vLLM or any OpenAI-compatible endpoint, with a model for summaries, cards and chat. Until then the environment
+applies: `AI_MODEL` (and `AI_BASE_URL` if the model is not served by the bundled Ollama), `EMBEDDING_MODEL`
+(multilingual, e.g. `bge-m3`) for the chat. The card verification needs the decision model `d1-omni` (LFM Open
+License, see [Licenses](docs/licenses.md#decision-model)). With the bundled Ollama:
 `docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull <model>`.
 See [Installation](docs/installation.md#ai-model).
 

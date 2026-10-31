@@ -56,6 +56,9 @@ importers:
       '@code-to-rag/filesystem':
         specifier: workspace:*
         version: link:../../outbound/filesystem
+      '@code-to-rag/ollama':
+        specifier: workspace:*
+        version: link:../../outbound/ollama
       '@code-to-rag/openai':
         specifier: workspace:*
         version: link:../../outbound/openai

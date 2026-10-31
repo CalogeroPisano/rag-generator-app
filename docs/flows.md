@@ -560,6 +560,20 @@ sequenceDiagram
 - The check in the routes (`beforeLoad`) is for the user experience; data protection lives in `authMiddleware`,
   applied to every server function, and in the session checks of the server routes.
 
+## Model settings
+
+1. The settings page (`/settings`, administrators) loads `getSettings` → `Settings.getModelSettings` +
+   `Settings.listUsers`: the settings in use (saved, or from the environment) without API keys, with the ids of the
+   connections that have one.
+2. Saving (`saveModelSettings`, confirmation dialog) checks that every model uses an existing connection, seals new
+   keys with `SecretBox`, keeps the others (on the first save, also the environment's), stores the row and
+   invalidates the `ModelRegistry` of the process.
+3. `ModelRegistry` (core) builds each model with the adapters' factories and caches it; every 5 s at most it checks
+   `model_settings.updated_at` and rebuilds when another process saved. Phases and use cases run inside
+   `withLanguageModel(task)`, `withEmbeddingModel` and `withDecisionModel`: summaries for `summarize-files` and
+   `summarize-modules`, cards for `map-features`, `generate-cards`, `verify-cards` (missing items), card jobs and
+   test questions, chat for the chat and test runs.
+
 ## Periodic maintenance (worker)
 
 Every minute the worker:

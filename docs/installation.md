@@ -55,6 +55,24 @@ To scale processing, start more workers: `docker compose up -d --scale worker=3`
 
 ## AI model
 
+Models are configured by an administrator on the **Impostazioni** page (link in the sidebar, administrators only:
+the first account, then whoever it grants the role to):
+
+- **connections**: OpenAI-compatible endpoints with a preset for OpenRouter, Google Gemini (its OpenAI-compatible
+  endpoint), OpenAI, Mistral, Groq, Ollama, vLLM, or any other URL; API key (stored encrypted with
+  `APP_ENCRYPTION_KEY`, never shown again), structured output on/off, calls in parallel per model;
+- **a model per group of tasks**: summaries (many short calls: a fast, cheap model is fine), cards (feature map,
+  cards, missing items, test questions) and chat (answers, test judging), each with its context window and output
+  limit;
+- the **embedding** model and the **decision model** (Ollama System One API).
+
+Web and worker pick up a save within about 5 seconds; phases already running finish with the previous models. With a
+cloud provider the masked code, summaries, cards and chat questions leave the customer's network: the page warns
+about it, and the operator must check that the customer allows it.
+
+The variables below are the **initial values**: they apply until the settings page is saved for the first time (the
+first save keeps their API keys, encrypted). After that, changing them has no effect on the models.
+
 The AI understanding ("Genera schede"), the test questions and the RAG chat call a chat model through an
 OpenAI-compatible API: the bundled Ollama, an Ollama on the host, vLLM or any compatible server. The model must
 support JSON-schema constrained output (`response_format`), as Ollama and vLLM do; otherwise set

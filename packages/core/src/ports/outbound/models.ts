@@ -4,7 +4,7 @@
  * (OpenAI-compatible endpoint), `@code-to-rag/ollama` (decision model) and, for
  * the log, by `@code-to-rag/postgres`.
  */
-import { Context, type Effect, Schema } from "effect"
+import { Context, type Duration, type Effect, type Redacted, Schema } from "effect"
 
 export const AiErrorKind = Schema.Literals(["not_configured", "timeout", "provider", "invalid_output"])
 export type AiErrorKind = typeof AiErrorKind.Type
@@ -176,3 +176,67 @@ export interface EmbeddingModelShape {
 export class EmbeddingModel extends Context.Service<EmbeddingModel, EmbeddingModelShape>()(
   "code-to-rag/core/EmbeddingModel"
 ) {}
+
+// ── Model factories ────────────────────────────────────────────────────────
+// The model settings are resolved by core (`ModelRegistry`): adapters only build a model from a resolved
+// configuration and transport its requests.
+
+/** An OpenAI-compatible endpoint, with its API key opened. */
+export interface ResolvedConnection {
+  /** Name recorded in the model call log as the provider. */
+  readonly name: string
+  readonly baseUrl: string
+  readonly apiKey: Redacted.Redacted | undefined
+  readonly structuredOutputs: boolean
+  readonly concurrency: number
+}
+
+/** Limits that apply to every model call. */
+export interface CallPolicy {
+  readonly timeout: Duration.Duration
+  /** Retries of a call that failed with a transient error (network, 429, 5xx, timeout). */
+  readonly maxRetries: number
+  readonly temperature: number
+}
+
+export interface LanguageModelConfig {
+  readonly connection: ResolvedConnection
+  readonly model: string
+  readonly contextTokens: number
+  readonly maxOutputTokens: number
+  readonly chatMaxOutputTokens: number
+  readonly policy: CallPolicy
+}
+
+export interface EmbeddingModelConfig {
+  readonly connection: ResolvedConnection
+  readonly model: string
+  readonly batchSize: number
+  readonly policy: CallPolicy
+}
+
+export interface DecisionModelConfig {
+  /** Ollama server, without `/v1`. */
+  readonly baseUrl: string
+  readonly model: string
+  readonly contextTokens: number
+  readonly maxQuestions: number
+  readonly concurrency: number
+  readonly keepAlive: string
+  readonly policy: CallPolicy
+}
+
+export class LanguageModelFactory extends Context.Service<
+  LanguageModelFactory,
+  { make(config: LanguageModelConfig): Effect.Effect<LanguageModelShape> }
+>()("code-to-rag/core/LanguageModelFactory") {}
+
+export class EmbeddingModelFactory extends Context.Service<
+  EmbeddingModelFactory,
+  { make(config: EmbeddingModelConfig): Effect.Effect<EmbeddingModelShape> }
+>()("code-to-rag/core/EmbeddingModelFactory") {}
+
+export class DecisionModelFactory extends Context.Service<
+  DecisionModelFactory,
+  { make(config: DecisionModelConfig): Effect.Effect<DecisionModelShape> }
+>()("code-to-rag/core/DecisionModelFactory") {}

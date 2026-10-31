@@ -1,5 +1,6 @@
 import { Config, Context, Duration, Effect, Layer } from "effect"
 import type { AcquisitionLimits } from "../domain/source/limits.ts"
+import { type ModelDefaults, readModelDefaults } from "./model-defaults.ts"
 
 export interface AppConfigShape {
   readonly limits: AcquisitionLimits
@@ -8,6 +9,8 @@ export interface AppConfigShape {
   readonly jobMaxAttempts: number
   /** Versions kept per project, the current one included (older ones are deleted when a new one becomes current). */
   readonly snapshotRetention: number
+  /** Initial model settings (environment) and limits of the model calls. */
+  readonly models: ModelDefaults
   /** Thresholds on the decision model's probabilities in the card verification. */
   readonly verification: {
     /** A statement at or above this probability is supported. */
@@ -58,6 +61,7 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()("cod
         gitAllowHttp: yield* Config.Boolean("GIT_ALLOW_HTTP").pipe(Config.withDefault(false)),
         gitCloneTimeout: yield* Config.Duration("GIT_CLONE_TIMEOUT").pipe(Config.withDefault(Duration.minutes(10))),
         jobMaxAttempts: yield* Config.Int("JOB_MAX_ATTEMPTS").pipe(Config.withDefault(3)),
+        models: yield* readModelDefaults,
         snapshotRetention: Math.max(1, yield* Config.Int("SNAPSHOT_RETENTION").pipe(Config.withDefault(3))),
         verification: {
           supported: yield* probability("VERIFY_SUPPORTED_THRESHOLD", 0.7),

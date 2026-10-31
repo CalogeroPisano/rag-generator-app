@@ -19,7 +19,12 @@ import {
   SnapshotRepository,
   type StructuredRequest
 } from "@code-to-rag/core/outbound"
-import { scriptedDecisionModel, scriptedEmbeddingModel, scriptedLanguageModel } from "@code-to-rag/core/testing"
+import {
+  scriptedDecisionModel,
+  scriptedEmbeddingModel,
+  scriptedLanguageModel,
+  scriptedModelRegistry
+} from "@code-to-rag/core/testing"
 import { Database } from "@code-to-rag/postgres"
 import { makeTestDatabaseLayer, resetDatabase, testDatabaseUrl } from "@code-to-rag/postgres/testing"
 import { sql } from "drizzle-orm"
@@ -125,7 +130,10 @@ const respond = (request: StructuredRequest<OutputSchema>): unknown => {
 }
 
 const makeLayer = (databaseUrl: string) =>
-  Layer.mergeAll(testAdapters, scriptedEmbeddingModel(), scriptedLanguageModel(respond), scriptedDecisionModel()).pipe(
+  scriptedModelRegistry.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(testAdapters, scriptedEmbeddingModel(), scriptedLanguageModel(respond), scriptedDecisionModel())
+    ),
     Layer.provideMerge(AppConfig.layer),
     Layer.provideMerge(makeTestDatabaseLayer(databaseUrl))
   )

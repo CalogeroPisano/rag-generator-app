@@ -8,7 +8,12 @@ import {
   type DecisionRequest,
   type StructuredRequest
 } from "@code-to-rag/core/outbound"
-import { scriptedDecisionModel, scriptedEmbeddingModel, scriptedLanguageModel } from "@code-to-rag/core/testing"
+import {
+  scriptedDecisionModel,
+  scriptedEmbeddingModel,
+  scriptedLanguageModel,
+  scriptedModelRegistry
+} from "@code-to-rag/core/testing"
 import { Database } from "@code-to-rag/postgres"
 import { makeTestDatabaseLayer, resetDatabase, testDatabaseUrl } from "@code-to-rag/postgres/testing"
 import { sql } from "drizzle-orm"
@@ -29,16 +34,22 @@ let decide: (request: DecisionRequest) => Record<string, number> = defaultDecide
 const requests: Array<StructuredRequest<OutputSchema>> = []
 
 const makeLayer = (databaseUrl: string) =>
-  Layer.mergeAll(
-    testAdapters,
-    // Embeddings not configured: no indexing jobs in the queue of these tests.
-    scriptedEmbeddingModel({ configured: false }),
-    scriptedLanguageModel((request) => {
-      requests.push(request)
-      return respond(request)
-    }),
-    scriptedDecisionModel((request) => decide(request))
-  ).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(makeTestDatabaseLayer(databaseUrl)))
+  scriptedModelRegistry.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        testAdapters,
+        // Embeddings not configured: no indexing jobs in the queue of these tests.
+        scriptedEmbeddingModel({ configured: false }),
+        scriptedLanguageModel((request) => {
+          requests.push(request)
+          return respond(request)
+        }),
+        scriptedDecisionModel((request) => decide(request))
+      )
+    ),
+    Layer.provideMerge(AppConfig.layer),
+    Layer.provideMerge(makeTestDatabaseLayer(databaseUrl))
+  )
 type Services = Layer.Success<ReturnType<typeof makeLayer>>
 
 const reviewer = { id: "user-1", name: "Revisore" }

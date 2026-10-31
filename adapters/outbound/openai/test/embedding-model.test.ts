@@ -7,11 +7,7 @@ import type { AiConfigShape } from "../src/config.ts"
 import { makeEmbeddingModel } from "../src/embedding-model.ts"
 
 const config: AiConfigShape = {
-  baseUrl: "http://localhost:11434/v1",
   providerName: "test",
-  model: "test-model",
-  apiKey: undefined,
-  structuredOutputs: true,
   timeout: Duration.seconds(5),
   maxRetries: 2,
   concurrency: 1,
@@ -19,7 +15,7 @@ const config: AiConfigShape = {
   maxOutputTokens: 1024,
   chatMaxOutputTokens: 512,
   temperature: 0,
-  embedding: { baseUrl: "http://localhost:11434/v1", model: "test-embedding", apiKey: undefined, batchSize: 2 }
+  batchSize: 2
 }
 
 const run = async (model: MockEmbeddingModelV4, texts: ReadonlyArray<string>) => {

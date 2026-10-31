@@ -185,6 +185,14 @@ The `user`, `session`, `account` and `verification` tables belong to Better Auth
 Rows read from the database are validated with the domain schemas (`adapters/outbound/postgres/src/rows.ts`): an unexpected value
 produces an explicit error instead of flowing into the domain.
 
+### Settings and administrators
+
+- **model_settings**: one row (id 1) saved from the settings page: `body` (connections without keys, model of each
+  group of tasks, embedding, decision model; validated with `ModelSettingsBody` when read), `sealed_keys` (API keys
+  sealed by connection id), `updated_at`, `updated_by`. No row: the environment variables apply.
+- **app_admin**: granted administrators (`user_id` → `user`, cascade). With no row, the oldest account is the
+  administrator.
+
 ### Model call log
 
 `model_call` (schema `public`) records every HTTP call to a model: job, snapshot, phase, task (prompt id), prompt

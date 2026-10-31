@@ -2,47 +2,46 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import {
   AiError,
   EmbeddingModel,
+  type EmbeddingModelConfig,
+  EmbeddingModelFactory,
   type EmbeddingRequest,
   type ModelCallOutcome,
   ModelCallRecorder
 } from "@code-to-rag/core/outbound"
 import { APICallError, embedMany, type EmbeddingModel as SdkEmbeddingModel } from "ai"
 import { Cause, type Duration, Effect, Exit, Layer, Redacted, Schedule, Semaphore } from "effect"
-import { AiConfig, type AiConfigShape } from "./config.ts"
+import type { AiConfigShape } from "./config.ts"
 import { modelFetch } from "./fetch.ts"
 
-/**
- * Adapter of the `EmbeddingModel` port: AI SDK with the OpenAI-compatible `/embeddings`, model from `EMBEDDING_*`.
- * Without `EMBEDDING_MODEL` every call fails with `not_configured`.
- */
-export const EmbeddingModelLive = Layer.effect(
-  EmbeddingModel,
+/** Factory of the `EmbeddingModel` port: AI SDK with the OpenAI-compatible `/embeddings`. */
+export const EmbeddingModelFactoryLive = Layer.effect(
+  EmbeddingModelFactory,
   Effect.gen(function* () {
-    const config = yield* AiConfig
-    const embedding = config.embedding
-    if (embedding.model === undefined) {
-      return EmbeddingModel.of({
-        modelId: undefined,
-        embed: () =>
-          Effect.fail(
-            new AiError({
-              kind: "not_configured",
-              message: "Modello di embedding non configurato (EMBEDDING_MODEL)",
-              retryable: false
-            })
-          )
-      })
-    }
-    const provider = createOpenAICompatible({
-      name: config.providerName,
-      baseURL: embedding.baseUrl,
-      ...(embedding.apiKey === undefined ? {} : { apiKey: Redacted.value(embedding.apiKey) }),
-      fetch: modelFetch
-    })
-    return yield* makeEmbeddingModel({
-      model: provider.embeddingModel(embedding.model),
-      modelId: embedding.model,
-      config
+    const recorder = yield* ModelCallRecorder
+    return EmbeddingModelFactory.of({
+      make: (config: EmbeddingModelConfig) => {
+        const provider = createOpenAICompatible({
+          name: config.connection.name,
+          baseURL: config.connection.baseUrl,
+          ...(config.connection.apiKey === undefined ? {} : { apiKey: Redacted.value(config.connection.apiKey) }),
+          fetch: modelFetch
+        })
+        return makeEmbeddingModel({
+          model: provider.embeddingModel(config.model),
+          modelId: config.model,
+          config: {
+            providerName: config.connection.name,
+            timeout: config.policy.timeout,
+            maxRetries: config.policy.maxRetries,
+            concurrency: config.connection.concurrency,
+            contextTokens: 0,
+            maxOutputTokens: 0,
+            chatMaxOutputTokens: 0,
+            temperature: 0,
+            batchSize: config.batchSize
+          }
+        }).pipe(Effect.provideService(ModelCallRecorder, recorder))
+      }
     })
   })
 )
@@ -64,7 +63,7 @@ export const makeEmbeddingModel = Effect.fnUntraced(function* (options: {
   const { model, modelId, config } = options
   const recorder = yield* ModelCallRecorder
   const semaphore = yield* Semaphore.make(Math.max(1, config.concurrency))
-  const batchSize = Math.max(1, config.embedding.batchSize)
+  const batchSize = Math.max(1, config.batchSize)
 
   const embedBatch = (request: EmbeddingRequest, texts: ReadonlyArray<string>) =>
     Effect.gen(function* () {

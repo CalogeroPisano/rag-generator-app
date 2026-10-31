@@ -1,6 +1,7 @@
-import { AiConfig, EmbeddingModelLive, LanguageModelLive } from "@code-to-rag/openai"
+import { DecisionModelFactoryLive } from "@code-to-rag/ollama"
+import { EmbeddingModelFactoryLive, LanguageModelFactoryLive } from "@code-to-rag/openai"
 import { FileAdaptersLive, ZipArchiveLive } from "@code-to-rag/filesystem"
-import { AppConfig } from "@code-to-rag/core"
+import { AppConfig, ModelRegistry } from "@code-to-rag/core"
 import { DatabaseLive, JobEventsListenerLive, SecretBoxLive } from "@code-to-rag/postgres"
 import { Config, Effect, Layer, Logger, ManagedRuntime } from "effect"
 
@@ -12,18 +13,18 @@ const LoggerLive = Layer.unwrap(
 )
 
 // The web calls models for the RAG chat only (question embedding and streamed answer); every other model call
-// runs in the worker. The model call log (ModelCallRecorder) is written by the database layer.
-const AiLive = Layer.mergeAll(LanguageModelLive, EmbeddingModelLive).pipe(Layer.provideMerge(AiConfig.layer))
+// runs in the worker. Models come from the settings page (or the environment until it is saved).
+const ModelsLive = ModelRegistry.layer.pipe(
+  Layer.provide(Layer.mergeAll(LanguageModelFactoryLive, EmbeddingModelFactoryLive, DecisionModelFactoryLive))
+)
 
-// The use cases of core run on the adapters (see apps/worker/src/main.ts); the web needs no code analyzer.
-const AppLive = Layer.mergeAll(
-  AppConfig.layer,
-  AiLive,
-  SecretBoxLive,
-  FileAdaptersLive,
-  ZipArchiveLive,
-  JobEventsListenerLive
-).pipe(Layer.provideMerge(DatabaseLive), Layer.provideMerge(LoggerLive))
+// The use cases of core run on the adapters (see adapters/inbound/worker/src/main.ts); the web needs no code analyzer.
+const AppLive = Layer.mergeAll(ModelsLive, FileAdaptersLive, ZipArchiveLive, JobEventsListenerLive).pipe(
+  Layer.provideMerge(SecretBoxLive),
+  Layer.provideMerge(DatabaseLive),
+  Layer.provideMerge(AppConfig.layer),
+  Layer.provideMerge(LoggerLive)
+)
 
 export type AppServices = Layer.Success<typeof AppLive>
 

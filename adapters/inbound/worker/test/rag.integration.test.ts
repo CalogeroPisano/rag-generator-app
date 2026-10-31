@@ -21,7 +21,12 @@ import {
   type StructuredRequest,
   type TextRequest
 } from "@code-to-rag/core/outbound"
-import { scriptedDecisionModel, scriptedEmbeddingModel, scriptedLanguageModel } from "@code-to-rag/core/testing"
+import {
+  scriptedDecisionModel,
+  scriptedEmbeddingModel,
+  scriptedLanguageModel,
+  scriptedModelRegistry
+} from "@code-to-rag/core/testing"
 import { Database } from "@code-to-rag/postgres"
 import { makeTestDatabaseLayer, resetDatabase, testDatabaseUrl } from "@code-to-rag/postgres/testing"
 import { sql } from "drizzle-orm"
@@ -93,17 +98,23 @@ let respondText: (request: TextRequest) => string = () => "From the documentatio
 const textRequests: Array<TextRequest> = []
 
 const makeLayer = (databaseUrl: string) =>
-  Layer.mergeAll(
-    testAdapters,
-    scriptedEmbeddingModel(),
-    scriptedLanguageModel(respond, {
-      respondText: (request) => {
-        textRequests.push(request)
-        return respondText(request)
-      }
-    }),
-    scriptedDecisionModel()
-  ).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(makeTestDatabaseLayer(databaseUrl)))
+  scriptedModelRegistry.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        testAdapters,
+        scriptedEmbeddingModel(),
+        scriptedLanguageModel(respond, {
+          respondText: (request) => {
+            textRequests.push(request)
+            return respondText(request)
+          }
+        }),
+        scriptedDecisionModel()
+      )
+    ),
+    Layer.provideMerge(AppConfig.layer),
+    Layer.provideMerge(makeTestDatabaseLayer(databaseUrl))
+  )
 type Services = Layer.Success<ReturnType<typeof makeLayer>>
 
 const user = { id: "user-1", name: "Revisore" }

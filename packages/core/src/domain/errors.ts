@@ -11,6 +11,11 @@ export class NotFoundError extends Schema.TaggedError<NotFoundError>()("NotFound
   id: Schema.String
 }) {}
 
+/** The user may not do this (e.g. settings, which only administrators change). */
+export class ForbiddenError extends Schema.TaggedError<ForbiddenError>()("ForbiddenError", {
+  message: Schema.String
+}) {}
+
 /** Input that passed schema validation but is not acceptable (e.g. unknown upload). */
 export class InvalidInputError extends Schema.TaggedError<InvalidInputError>()("InvalidInputError", {
   message: Schema.String

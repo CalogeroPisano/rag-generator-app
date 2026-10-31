@@ -1,13 +1,15 @@
 import {
   AiError,
   DecisionModel,
+  type DecisionModelConfig,
+  DecisionModelFactory,
   type DecisionRequest,
   type ModelCallOutcome,
   ModelCallRecorder
 } from "@code-to-rag/core/outbound"
 import { Cause, type Duration, Effect, Exit, Layer, Schedule, Schema, Semaphore } from "effect"
 import { Agent, fetch as undiciFetch } from "undici"
-import { DecisionConfig, type DecisionConfigShape } from "./config.ts"
+import type { DecisionConfigShape } from "./config.ts"
 
 /**
  * No headers or body timeout from undici (Node's fetch gives up after 5 minutes without headers): the only limit is
@@ -62,11 +64,26 @@ const toAiError = (error: unknown, model: string): AiError => {
   })
 }
 
-/** Adapter of the `DecisionModel` port: Ollama's `POST /v1/systemone`, model from `DECISION_*`. */
-export const DecisionModelLive = Layer.effect(
-  DecisionModel,
+/** Factory of the `DecisionModel` port: Ollama's `POST /v1/systemone`, configuration resolved by core. */
+export const DecisionModelFactoryLive = Layer.effect(
+  DecisionModelFactory,
   Effect.gen(function* () {
-    return yield* makeDecisionModel({ config: yield* DecisionConfig })
+    const recorder = yield* ModelCallRecorder
+    return DecisionModelFactory.of({
+      make: (config: DecisionModelConfig) =>
+        makeDecisionModel({
+          config: {
+            baseUrl: config.baseUrl.replace(/\/+$/, ""),
+            model: config.model,
+            timeout: config.policy.timeout,
+            maxRetries: config.policy.maxRetries,
+            concurrency: config.concurrency,
+            contextTokens: config.contextTokens,
+            maxQuestions: config.maxQuestions,
+            keepAlive: config.keepAlive
+          }
+        }).pipe(Effect.provideService(ModelCallRecorder, recorder))
+    })
   })
 )
 

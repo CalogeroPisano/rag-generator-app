@@ -50,6 +50,19 @@ comments are therefore extracted from already-masked text. Parsing logs record c
 - The **decision model** (card statements) receives masked code excerpts and card text, like the chat model, through `DECISION_BASE_URL` (Ollama, typically on the same network). Its
   calls are logged in `model_call` with metadata only; the HTTP error body is never kept (status only).
 
+## Model settings and API keys
+
+- Only administrators open the settings page and change models, API keys and administrators; every settings use
+  case checks the role in core (`ForbiddenError`), the page only hides the link. While no administrator is granted,
+  the oldest account is one; the last administrator cannot be revoked.
+- API keys are sealed with AES-256-GCM (`APP_ENCRYPTION_KEY`, associated data `model-connection:<id>`) in
+  `model_settings.sealed_keys`; they are never returned to the browser (the page only knows whether a key is set),
+  never logged, and opened only to build the model client. A key sealed with another `APP_ENCRYPTION_KEY` is ignored
+  (warning in the log) and must be entered again.
+- A connection to a cloud provider (OpenRouter, Gemini, OpenAI…) sends it the masked code, the summaries, the cards
+  and the chat questions: the settings page warns about it. The model call log records the connection name as the
+  provider, never URLs or keys.
+
 ## Knowledge export
 
 - Any authenticated user can export a project (there are no roles yet); the download route checks the session.

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ChevronsUpDownIcon, FolderGit2Icon, LogOutIcon, PlusIcon } from "lucide-react"
+import { ChevronsUpDownIcon, FolderGit2Icon, LogOutIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,11 +24,12 @@ import {
 import { authClient } from "@/lib/auth-client"
 
 const navigation = [
-  { to: "/projects", label: "Progetti", icon: FolderGit2Icon, exact: true },
-  { to: "/projects/new", label: "Nuovo progetto", icon: PlusIcon, exact: true }
+  { to: "/projects", label: "Progetti", icon: FolderGit2Icon, exact: true, admin: false },
+  { to: "/projects/new", label: "Nuovo progetto", icon: PlusIcon, exact: true, admin: false },
+  { to: "/settings", label: "Impostazioni", icon: SettingsIcon, exact: true, admin: true }
 ] as const
 
-export function AppSidebar({ user }: { user: { name: string; email: string } }) {
+export function AppSidebar({ user }: { user: { name: string; email: string; admin: boolean } }) {
   const navigate = useNavigate()
   const signOut = async () => {
     await authClient.signOut()
@@ -59,16 +60,18 @@ export function AppSidebar({ user }: { user: { name: string; email: string } }) 
           <SidebarGroupLabel>Navigazione</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navigation.map((item) => (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton asChild tooltip={item.label}>
-                    <Link to={item.to} activeOptions={{ exact: item.exact }} activeProps={{ "data-active": true }}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {navigation
+                .filter((item) => !item.admin || user.admin)
+                .map((item) => (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton asChild tooltip={item.label}>
+                      <Link to={item.to} activeOptions={{ exact: item.exact }} activeProps={{ "data-active": true }}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

@@ -27,6 +27,8 @@ export * from "./understanding-repository.ts"
 export * as schema from "./schema/index.ts"
 
 /** Every repository, on top of an existing `Database`. */
+import { SettingsRepositoryLive, UserRepositoryLive } from "./settings-repository.ts"
+
 export const RepositoriesLive = Layer.mergeAll(
   ProjectRepositoryLive,
   SnapshotRepositoryLive,
@@ -38,7 +40,9 @@ export const RepositoriesLive = Layer.mergeAll(
   IndexRepositoryLive,
   EvaluationRepositoryLive,
   ChatRepositoryLive,
-  ExportRepositoryLive
+  ExportRepositoryLive,
+  SettingsRepositoryLive,
+  UserRepositoryLive
 )
 
 /** Repositories plus the `Database` service itself (pool from `DATABASE_URL`). */

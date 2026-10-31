@@ -40,6 +40,7 @@ import {
   SnapshotRepository
 } from "../../ports/outbound/repositories.ts"
 import { chunks, provenance, skipInvalid, toPhaseError } from "../understanding/shared.ts"
+import { ModelRegistry, withEmbeddingModel, withLanguageModel } from "../models.ts"
 import { ensureNotUpdating } from "../updates.ts"
 import { generateAnswer, prepareAnswer } from "./chat.ts"
 
@@ -120,9 +121,15 @@ const generateQuestions = Effect.fn("evaluation.generateQuestions")(
   (effect) => effect.pipe(Effect.mapError(toPhaseError("generate")))
 )
 
-export const questionsPipeline: Pipeline<EvaluationRepository | KnowledgeRepository | LanguageModel | AppConfig> = {
+export const questionsPipeline: Pipeline<EvaluationRepository | KnowledgeRepository | ModelRegistry | AppConfig> = {
   type: "questions",
-  phases: [{ name: "generate", run: ({ job, progress }) => generateQuestions(job, progress) }],
+  phases: [
+    {
+      name: "generate",
+      run: ({ job, progress }) =>
+        generateQuestions(job, progress).pipe(withLanguageModel("cards"), Effect.mapError(toPhaseError("generate")))
+    }
+  ],
   onFailed: () => Effect.void
 }
 
@@ -299,13 +306,29 @@ const finalizeRun = Effect.fn("evaluation.finalizeRun")(
 )
 
 export const evaluationPipeline: Pipeline<
-  AppConfig | EmbeddingModel | EvaluationRepository | IndexRepository | KnowledgeRepository | LanguageModel
+  AppConfig | EvaluationRepository | IndexRepository | KnowledgeRepository | ModelRegistry
 > = {
   type: "evaluation",
   phases: [
-    { name: "prepare", run: ({ job }) => prepareRun(job) },
-    { name: "answer", run: ({ job, progress }) => answerQuestions(job, progress) },
-    { name: "finalize", run: ({ job }) => finalizeRun(job) }
+    {
+      name: "prepare",
+      run: ({ job }) =>
+        prepareRun(job).pipe(withLanguageModel("chat"), withEmbeddingModel, Effect.mapError(toPhaseError("prepare")))
+    },
+    {
+      name: "answer",
+      run: ({ job, progress }) =>
+        answerQuestions(job, progress).pipe(
+          withLanguageModel("chat"),
+          withEmbeddingModel,
+          Effect.mapError(toPhaseError("answer"))
+        )
+    },
+    {
+      name: "finalize",
+      run: ({ job }) =>
+        finalizeRun(job).pipe(withLanguageModel("chat"), withEmbeddingModel, Effect.mapError(toPhaseError("finalize")))
+    }
   ],
   onFailed: (job) =>
     EvaluationRepository.use((evaluation) => evaluation.finishRun(job.id, "failed", null)).pipe(Effect.ignore)
@@ -351,9 +374,11 @@ export const requestEvaluation = Effect.fn("requestEvaluation")(function* (
 ) {
   const config = yield* AppConfig
   const jobs = yield* JobRepository
-  const embeddings = yield* EmbeddingModel
+  const embeddings = yield* (yield* ModelRegistry).embeddingModel()
   if (embeddings.modelId === undefined) {
-    return yield* new InvalidInputError({ message: "Modello di embedding non configurato (EMBEDDING_MODEL)" })
+    return yield* new InvalidInputError({
+      message: "Modello di embedding non configurato: impostalo nella pagina Impostazioni"
+    })
   }
   const snapshot = yield* readySnapshot(snapshotId)
   return yield* jobs.enqueue({

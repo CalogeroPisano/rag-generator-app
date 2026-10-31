@@ -348,3 +348,29 @@ export const chatMessage = pgTable(
     check("chat_message_status_check", sql`${table.status} in ('complete', 'failed', 'interrupted')`)
   ]
 )
+
+/**
+ * Model settings saved from the settings page: one row (id 1). `body` holds no secret; `sealed_keys` holds the API
+ * keys sealed with the application key (AES-256-GCM, context `model-connection:<id>`), by connection id.
+ */
+export const modelSettings = pgTable(
+  "model_settings",
+  {
+    id: integer("id").primaryKey().default(1),
+    body: jsonb("body").notNull(),
+    sealedKeys: jsonb("sealed_keys").$type<Record<string, string>>().notNull().default({}),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    /** Administrator's name (copied). */
+    updatedBy: text("updated_by").notNull()
+  },
+  (table) => [check("model_settings_single_row", sql`${table.id} = 1`)]
+)
+
+/** Administrators: they edit the settings and the administrators. With none, the oldest account is one. */
+export const appAdmin = pgTable("app_admin", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  grantedBy: text("granted_by").notNull(),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).defaultNow().notNull()
+})

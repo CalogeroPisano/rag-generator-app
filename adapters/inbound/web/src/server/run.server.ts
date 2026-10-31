@@ -17,6 +17,8 @@ const userFacing = (error: unknown): UserFacingError | "not_found" | undefined =
       return "not_found"
     case "InvalidInputError":
       return { message: tagged.message ?? "Dati non validi", status: 400 }
+    case "ForbiddenError":
+      return { message: tagged.message ?? "Operazione non consentita", status: 403 }
     case "UploadError":
       return {
         message: tagged.message ?? "Caricamento non riuscito",

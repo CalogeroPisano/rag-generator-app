@@ -1,6 +1,6 @@
-import { AiConfig, makeLanguageModel } from "@code-to-rag/openai"
+import { makeLanguageModel } from "@code-to-rag/openai"
 import { AiError, type DecisionRequest, type OutputSchema, type StructuredRequest } from "@code-to-rag/core/outbound"
-import { RollupOutput } from "@code-to-rag/core/testing"
+import { RollupOutput, scriptedModelRegistry } from "@code-to-rag/core/testing"
 import { scriptedDecisionModel, scriptedEmbeddingModel, scriptedLanguageModel } from "@code-to-rag/core/testing"
 import { AppConfig, type Job, Jobs, Knowledge, Projects, type SnapshotId, UploadId } from "@code-to-rag/core"
 import {
@@ -14,7 +14,7 @@ import { makeTestDatabaseLayer, resetDatabase, testDatabaseUrl } from "@code-to-
 import { simulateReadableStream } from "ai"
 import { MockLanguageModelV4 } from "ai/test"
 import { sql } from "drizzle-orm"
-import { Effect, Layer, ManagedRuntime, Option } from "effect"
+import { Duration, Effect, Layer, ManagedRuntime, Option } from "effect"
 import { randomBytes, randomUUID } from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as os from "node:os"
@@ -32,20 +32,26 @@ const calls: Array<string> = []
 const decisions: Array<DecisionRequest> = []
 
 const makeLayer = (databaseUrl: string) =>
-  Layer.mergeAll(
-    testAdapters,
-    // Embeddings not configured: no indexing jobs in the queue of these tests.
-    scriptedEmbeddingModel({ configured: false }),
-    scriptedLanguageModel((request) => {
-      calls.push(request.prompt.id)
-      return respond(request)
-    }),
-    scriptedDecisionModel((request) => {
-      calls.push(request.prompt.id)
-      decisions.push(request)
-      return defaultDecide(request)
-    })
-  ).pipe(Layer.provideMerge(AppConfig.layer), Layer.provideMerge(makeTestDatabaseLayer(databaseUrl)))
+  scriptedModelRegistry.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        testAdapters,
+        // Embeddings not configured: no indexing jobs in the queue of these tests.
+        scriptedEmbeddingModel({ configured: false }),
+        scriptedLanguageModel((request) => {
+          calls.push(request.prompt.id)
+          return respond(request)
+        }),
+        scriptedDecisionModel((request) => {
+          calls.push(request.prompt.id)
+          decisions.push(request)
+          return defaultDecide(request)
+        })
+      )
+    ),
+    Layer.provideMerge(AppConfig.layer),
+    Layer.provideMerge(makeTestDatabaseLayer(databaseUrl))
+  )
 type Services = Layer.Success<ReturnType<typeof makeLayer>>
 
 describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () => {
@@ -262,8 +268,21 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
       }
     })
     const program = Effect.gen(function* () {
-      const config = yield* AiConfig
-      const service = yield* makeLanguageModel({ model, modelId: "mock-model", config })
+      const service = yield* makeLanguageModel({
+        model,
+        modelId: "mock-model",
+        config: {
+          providerName: "test",
+          timeout: Duration.seconds(5),
+          maxRetries: 0,
+          concurrency: 1,
+          contextTokens: 8192,
+          maxOutputTokens: 1024,
+          chatMaxOutputTokens: 512,
+          temperature: 0,
+          batchSize: 1
+        }
+      })
       yield* service.generateObject({
         prompt: { id: "module-summary", version: 1 },
         context: { phase: "summarize-modules", snapshotId },
@@ -273,7 +292,7 @@ describe.skipIf(url === undefined)("AI understanding pipeline (PostgreSQL)", () 
       })
       return yield* UnderstandingRepository.use((u) => u.modelCallStats(snapshotId))
     })
-    const stats = await run(program.pipe(Effect.provide(AiConfig.layer)))
+    const stats = await run(program)
     expect(stats.total).toMatchObject({ calls: 1, failures: 0, inputTokens: 50, outputTokens: 5 })
     expect(stats.byTask.map((row) => row.task)).toEqual(["module-summary"])
     expect(stats.models).toEqual(["mock-model"])

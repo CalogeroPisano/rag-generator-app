@@ -7,6 +7,7 @@
 import { EmbeddingModel } from "../../ports/outbound/models.ts"
 import { Effect, Option } from "effect"
 import { AppConfig } from "../config.ts"
+import { ModelRegistry, withEmbeddingModel } from "../models.ts"
 import { type Job, JobId, type SnapshotId } from "../../domain/model.ts"
 import { PhaseError } from "../../domain/errors.ts"
 import type { PhaseContext, Pipeline } from "../pipeline.ts"
@@ -65,9 +66,15 @@ const indexCards = Effect.fn("rag.indexCards")(
   (effect) => effect.pipe(Effect.mapError(toPhaseError("index")))
 )
 
-export const indexingPipeline: Pipeline<EmbeddingModel | IndexRepository> = {
+export const indexingPipeline: Pipeline<IndexRepository | ModelRegistry> = {
   type: "indexing",
-  phases: [{ name: "index", run: ({ job, progress }) => indexCards(job, progress) }],
+  phases: [
+    {
+      name: "index",
+      run: ({ job, progress }) =>
+        indexCards(job, progress).pipe(withEmbeddingModel, Effect.mapError(toPhaseError("index")))
+    }
+  ],
   // Chunks are saved per card: what was indexed stays usable.
   onFailed: () => Effect.void
 }
@@ -78,7 +85,7 @@ export const indexingPipeline: Pipeline<EmbeddingModel | IndexRepository> = {
  * when embeddings are not configured.
  */
 export const requestIndexing = Effect.fn("requestIndexing")(function* (snapshotId: SnapshotId) {
-  const embeddings = yield* EmbeddingModel
+  const embeddings = yield* (yield* ModelRegistry).embeddingModel()
   if (embeddings.modelId === undefined) return Option.none<Job>()
   const config = yield* AppConfig
   const jobs = yield* JobRepository
