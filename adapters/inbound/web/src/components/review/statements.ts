@@ -70,3 +70,9 @@ export const wrongStatements = (card: CardData): Array<Statement> => {
   const wrong = new Set(card.statementReviews.filter((r) => r.verdict === "wrong").map((r) => r.id))
   return statementsOf(card.content).filter((statement) => wrong.has(statement.id))
 }
+
+export type MissingItem = NonNullable<CardData["verification"]>["missing"][number]
+
+/** Missing items of the card's verification the reviewer has neither added nor ignored, with their index. */
+export const undecidedMissing = (card: CardData): Array<{ item: MissingItem; index: number }> =>
+  (card.verification?.missing ?? []).flatMap((item, index) => (item.decision === undefined ? [{ item, index }] : []))

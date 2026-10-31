@@ -210,7 +210,7 @@ export const cardVerification = rag.table("card_verification", {
   cardVersion: integer("card_version").notNull(),
   /** `[{ id: "section.index", verdict, note, probability? }]` */
   statements: jsonb("statements").notNull(),
-  /** `[{ section, text, references }]`: what the code shows and the card does not say. */
+  /** `[{ section, text, references, decision? }]`: what the code shows and the card does not say. */
   missing: jsonb("missing").notNull(),
   issues: integer("issues").notNull(),
   promptVersion: integer("prompt_version").notNull(),

@@ -12,6 +12,9 @@ import { UploadStore } from "../ports/outbound/source.ts"
 import { AppConfig } from "./config.ts"
 import {
   type CardJobPayload,
+  type CardVerification,
+  type CardView,
+  type MissingItem,
   type StatementReviewVerdict,
   type CardOperation,
   type Job,
@@ -24,6 +27,7 @@ import type { Pipeline } from "./pipeline.ts"
 import {
   JobRepository,
   KnowledgeRepository,
+  type MissingItemsUpdate,
   ProjectRepository,
   type Reviewer,
   SnapshotRepository,
@@ -38,6 +42,7 @@ import {
   writeCard
 } from "./understanding/cards.ts"
 import { checkReferences } from "./understanding/references.ts"
+import { withMissingItem } from "./missing-items.ts"
 import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { requestIndexing } from "./rag/indexing.ts"
 import { carryStatementReviews } from "./statement-reviews.ts"
@@ -270,6 +275,16 @@ export const correctCard = Effect.fn("correctCard")(function* (
   return yield* requestCardOperation(snapshotId, cardId, "correct")
 })
 
+/** Every included file of the snapshot, whole: what manual edits may cite. */
+const snapshotFiles = Effect.fnUntraced(function* (snapshotId: SnapshotId) {
+  const files = yield* (yield* SnapshotRepository).listFiles(snapshotId)
+  return new Map(
+    files
+      .filter((file) => !file.isDirectory && file.excludedReason === null)
+      .map((file) => [file.path, { totalLines: file.lineCount, ranges: [[1, file.lineCount] as const] }])
+  )
+})
+
 /**
  * Manual edit. References must point to existing lines of the snapshot's files;
  * the others are dropped (and counted, like for generated cards).
@@ -284,13 +299,7 @@ export const editCard = Effect.fn("editCard")(function* (
   const snapshots = yield* SnapshotRepository
   const { snapshot } = yield* snapshots.get(snapshotId)
   yield* ensureNotUpdating(snapshot.projectId)
-  const files = yield* snapshots.listFiles(snapshotId)
-  const shown = new Map(
-    files
-      .filter((file) => !file.isDirectory && file.excludedReason === null)
-      .map((file) => [file.path, { totalLines: file.lineCount, ranges: [[1, file.lineCount] as const] }])
-  )
-  const checked = checkReferences(content, shown)
+  const checked = checkReferences(content, yield* snapshotFiles(snapshotId))
   const before = yield* knowledge.getCard(snapshotId, cardId)
   yield* knowledge.editCard(
     snapshotId,
@@ -359,6 +368,101 @@ export const reviewStatement = Effect.fn("reviewStatement")(function* (
         ? ("in_review" as const)
         : undefined
   yield* knowledge.saveStatementReviews(snapshotId, cardId, reviews, status, reviewer)
+})
+
+/** The missing item `index` of the card's verification, still undecided (or decided as `allowDecided`). */
+const missingItemOf = (card: CardView, index: number, allowDecided: boolean) =>
+  Effect.gen(function* () {
+    const item = card.verification?.missing[index]
+    if (item === undefined) return yield* new NotFoundError({ entity: "missing item", id: String(index) })
+    if (item.decision !== undefined && !allowDecided) {
+      return yield* new InvalidInputError({ message: "Questo elemento è già stato gestito" })
+    }
+    return { verification: card.verification!, item }
+  })
+
+/** Missing items with one decision changed, and the verification's issue count that follows. */
+const decideMissing = (
+  verification: CardVerification,
+  index: number,
+  decision: MissingItem["decision"]
+): MissingItemsUpdate => {
+  const before = verification.missing[index]!.decision === undefined
+  const after = decision === undefined
+  const { decision: _previous, ...item } = verification.missing[index]!
+  return {
+    items: verification.missing.map((current, i) =>
+      i !== index ? current : decision === undefined ? item : { ...item, decision }
+    ),
+    issues: Math.max(0, verification.issues + (after ? 1 : 0) - (before ? 1 : 0))
+  }
+}
+
+/**
+ * Adds a missing item to the card (a manual edit: new version, in review, indexed again). The new statement is
+ * confirmed by the reviewer who added it; the item is marked `added` in the verification.
+ */
+export const addMissingItem = Effect.fn("addMissingItem")(function* (
+  snapshotId: SnapshotId,
+  cardId: string,
+  index: number,
+  reviewer: Reviewer
+) {
+  const knowledge = yield* KnowledgeRepository
+  const snapshots = yield* SnapshotRepository
+  const { snapshot } = yield* snapshots.get(snapshotId)
+  yield* ensureNotUpdating(snapshot.projectId)
+  const card = yield* knowledge.getCard(snapshotId, cardId)
+  const { verification, item } = yield* missingItemOf(card, index, false)
+  const checked = checkReferences(withMissingItem(card.content, item), yield* snapshotFiles(snapshotId))
+  const reviewedAt = new Date().toISOString()
+  const added = cardStatements(checked.content)
+    .filter((s) => s.id.startsWith(`${item.section}.`))
+    .at(-1)!
+  yield* knowledge.editCard(
+    snapshotId,
+    cardId,
+    {
+      ...checked,
+      statementReviews: [
+        ...carryStatementReviews(card.content, checked.content, card.statementReviews),
+        { id: added.id, verdict: "confirmed", reviewer: reviewer.name, reviewedAt }
+      ],
+      missing: decideMissing(verification, index, { verdict: "added", reviewer: reviewer.name, reviewedAt })
+    },
+    reviewer
+  )
+  yield* requestIndexing(snapshotId)
+})
+
+/**
+ * Ignores a missing item (`ignored`) or takes the decision back (`null`; an added item stays in the card, only its
+ * mark goes). A card not yet in review goes in review.
+ */
+export const ignoreMissingItem = Effect.fn("ignoreMissingItem")(function* (
+  snapshotId: SnapshotId,
+  cardId: string,
+  index: number,
+  ignored: boolean,
+  reviewer: Reviewer
+) {
+  const knowledge = yield* KnowledgeRepository
+  const snapshots = yield* SnapshotRepository
+  const { snapshot } = yield* snapshots.get(snapshotId)
+  yield* ensureNotUpdating(snapshot.projectId)
+  const card = yield* knowledge.getCard(snapshotId, cardId)
+  const { verification, item } = yield* missingItemOf(card, index, !ignored)
+  if (!ignored && item.decision?.verdict !== "ignored") return
+  const update = decideMissing(
+    verification,
+    index,
+    ignored ? { verdict: "ignored", reviewer: reviewer.name, reviewedAt: new Date().toISOString() } : undefined
+  )
+  const status =
+    card.status === "generated" || card.status === "flagged" || card.status === "needs_recheck"
+      ? ("in_review" as const)
+      : undefined
+  yield* knowledge.saveMissingItems(snapshotId, cardId, update, status, reviewer)
 })
 
 /**

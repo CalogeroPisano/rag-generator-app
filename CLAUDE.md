@@ -154,6 +154,10 @@ Composition roots provide `ModelRegistry.layer` + factories, never the models th
    UI; approving (`setCardStatus` approved) confirms every undecided statement. Every card action in the UI goes
    through a confirmation dialog (`ConfirmAction`); the approval dialog lists statements to check, wrong ones and
    missing items. The editor shows the status of the statement each item comes from (`origin` in the draft).
+   Missing items (user's choice): "Aggiungi alla scheda" (`addMissingItem`, `missing-items.ts` `withMissingItem`:
+   appended to its section, confirmed, a manual edit) or "Ignora" / "Ripristina" (`ignoreMissingItem`); the decision
+   is stored on the item (`card_verification.missing[].decision`), decided items leave `issues`, a re-verification
+   keeps ignored items it lists again (`missingKey`); the section stays visible after the edit's new version.
 5. Understanding and card jobs exclude each other per project (`JobRepository.active`).
 6. `deleteProject`: refused if a job is running; `KnowledgeRepository.deleteProject` (rag rows + corrections) then
    `ProjectRepository.delete` (cascade, orphan blobs) and upload files.

@@ -220,6 +220,66 @@ describe.skipIf(url === undefined)("card review (PostgreSQL)", () => {
     })
   })
 
+  it("adds missing items to the card or ignores them, and keeps ignored ones across verifications", async () => {
+    const quantity = {
+      section: "validationRules",
+      text: "The quantity must not exceed 100.",
+      references: [{ path: "web/src/orders/service.ts", startLine: 5, endLine: 5 }]
+    }
+    const tooMany = {
+      section: "errors",
+      text: 'Too many items (message: "Too many items")',
+      references: [{ path: "web/src/orders/service.ts", startLine: 5, endLine: 5 }]
+    }
+    respond = (request) =>
+      request.prompt.id === "card-missing" ? { missing: [quantity, tooMany] } : defaultRespond(request)
+    const { snapshotId, featureId, cardId } = await understood()
+    const card = () => currentCard(snapshotId, featureId)
+    const before = await card()
+    const issues = before.verification!.issues
+
+    // Adding: new version with the item as a confirmed statement; the item is marked, no longer an issue.
+    await run(Knowledge.addMissingItem(snapshotId, cardId, 1, reviewer))
+    const added = await card()
+    expect(added).toMatchObject({ version: before.version + 1, status: "in_review" })
+    expect(added.content.errors.at(-1)).toEqual({
+      condition: "Too many items",
+      message: "Too many items",
+      references: tooMany.references
+    })
+    const errorId = `errors.${added.content.errors.length - 1}`
+    expect(added.statementReviews.find((r) => r.id === errorId)?.verdict).toBe("confirmed")
+    expect(added.verification!.missing[1]!.decision).toMatchObject({ verdict: "added", reviewer: "Revisore" })
+    expect(added.verification!.issues).toBe(issues - 1)
+    const twice = await run(Effect.flip(Knowledge.addMissingItem(snapshotId, cardId, 1, reviewer)))
+    expect(twice._tag).toBe("InvalidInputError")
+    expect((await run(Effect.flip(Knowledge.addMissingItem(snapshotId, cardId, 5, reviewer))))._tag).toBe(
+      "NotFoundError"
+    )
+
+    // Ignoring and restoring.
+    await run(Knowledge.ignoreMissingItem(snapshotId, cardId, 0, true, reviewer))
+    expect((await card()).verification).toMatchObject({ issues: issues - 2 })
+    await run(Knowledge.ignoreMissingItem(snapshotId, cardId, 0, false, reviewer))
+    expect((await card()).verification!.missing[0]!.decision).toBeUndefined()
+    // Restoring an added item changes nothing.
+    await run(Knowledge.ignoreMissingItem(snapshotId, cardId, 1, false, reviewer))
+    expect((await card()).verification!.missing[1]!.decision?.verdict).toBe("added")
+    await run(Knowledge.ignoreMissingItem(snapshotId, cardId, 0, true, reviewer))
+
+    // A new verification listing the ignored item again (spaces and case aside) keeps it ignored.
+    respond = (request) =>
+      request.prompt.id === "card-missing"
+        ? { missing: [{ ...quantity, text: "the quantity  must not exceed 100." }] }
+        : defaultRespond(request)
+    await run(Knowledge.requestCardOperation(snapshotId, cardId, "verify"))
+    expect((await runClaimed()).status).toBe("succeeded")
+    const verified = (await card()).verification!
+    expect(verified.cardVersion).toBe(added.version)
+    expect(verified.missing).toHaveLength(1)
+    expect(verified.missing[0]!.decision?.verdict).toBe("ignored")
+  })
+
   it("verifies a card on demand and keeps review decisions", async () => {
     const { snapshotId, featureId, cardId } = await understood()
     expect((await currentCard(snapshotId, featureId)).status).toBe("flagged")

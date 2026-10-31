@@ -242,6 +242,29 @@ export class FeatureMap extends Schema.Class<FeatureMap>("FeatureMap")({
 export const CardOperation = Schema.Literals(["verify", "regenerate", "correct", "generate"])
 export type CardOperation = typeof CardOperation.Type
 
+/**
+ * A reviewer's decision on a missing item: `added` to the card (manual edit) or `ignored` (not worth a statement).
+ * Decided items no longer count as issues; ignored ones are kept by later verifications listing the same item.
+ */
+export const MissingItemVerdict = Schema.Literals(["added", "ignored"])
+export type MissingItemVerdict = typeof MissingItemVerdict.Type
+
+export const MissingItem = Schema.Struct({
+  section: CardSectionName,
+  text: Schema.String,
+  references: Schema.Array(CardReference),
+  decision: Schema.optional(
+    Schema.Struct({
+      verdict: MissingItemVerdict,
+      /** Reviewer's name. */
+      reviewer: Schema.String,
+      /** ISO timestamp. */
+      reviewedAt: Schema.String
+    })
+  )
+})
+export type MissingItem = typeof MissingItem.Type
+
 /** Result of the automatic verification of one card version. */
 export class CardVerification extends Schema.Class<CardVerification>("CardVerification")({
   cardVersion: Schema.Int,
@@ -257,10 +280,8 @@ export class CardVerification extends Schema.Class<CardVerification>("CardVerifi
     })
   ),
   /** What the code shows and the card does not say, listed by the language model. */
-  missing: Schema.Array(
-    Schema.Struct({ section: CardSectionName, text: Schema.String, references: Schema.Array(CardReference) })
-  ),
-  /** Statements not fully supported + missing items + statements without references. */
+  missing: Schema.Array(MissingItem),
+  /** Statements not fully supported + undecided missing items + statements without references. */
   issues: Schema.Int
 }) {}
 

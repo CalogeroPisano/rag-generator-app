@@ -295,7 +295,7 @@ erDiagram
     uuid card_id PK "FK"
     int card_version
     jsonb statements "[{id, verdict, note, probability?}]"
-    jsonb missing "[{section, text, references}]"
+    jsonb missing "[{section, text, references, decision?}]"
     int issues
     text model
     timestamptz verified_at
@@ -397,7 +397,8 @@ confirmed | wrong, reviewer, reviewedAt }]` (ids `section.index`); approving the
   A manual edit keeps those of the statements left identical (new ids) and drops the others; they are the reference data for tuning the decision model's thresholds.
 - **card_verification**: the latest verification of a card; outdated when `card_version` < `card.version`. Since
   `prompt_version` 3 each statement has the `probability` (decision model) that the code supports it; `missing` is
-  listed by the language model; `model` names both. Older verifications (language model alone) have a `note` per
+  listed by the language model, each item with the reviewer's `decision` once taken (`{ verdict: added | ignored,
+reviewer, reviewedAt }`; `issues` counts undecided items only); `model` names both. Older verifications (language model alone) have a `note` per
   statement instead.
 - **correction**: reviewer corrections. They do not cascade from `rag.snapshot`: they belong to the project and to a
   feature name, survive new feature maps (re-attached by `feature_key`) and are deleted only with the project.

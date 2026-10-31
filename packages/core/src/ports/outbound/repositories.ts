@@ -25,6 +25,7 @@ import type {
   CardVerification,
   CardView,
   StatementReview,
+  MissingItem,
   Correction,
   FeatureMap,
   FeatureSymbol,
@@ -366,6 +367,12 @@ export interface NewCorrection {
   readonly author: Reviewer
 }
 
+/** Missing items of a verification with the reviewer's decisions, and the issue count that follows. */
+export interface MissingItemsUpdate {
+  readonly items: ReadonlyArray<MissingItem>
+  readonly issues: number
+}
+
 export interface NewVerification {
   readonly cardVersion: number
   readonly statements: CardVerification["statements"]
@@ -456,7 +463,17 @@ export class KnowledgeRepository extends Context.Service<
         readonly unreferencedStatements: number
         /** Reviewer decisions carried to the new version (statements left identical). */
         readonly statementReviews: ReadonlyArray<StatementReview>
+        /** Missing items of the verification with their decisions, saved in the same transaction. */
+        readonly missing?: MissingItemsUpdate | undefined
       },
+      reviewer: Reviewer
+    ): Effect.Effect<void, NotFoundError | DatabaseError>
+    /** Reviewer decisions on the missing items of the card's verification. */
+    saveMissingItems(
+      id: SnapshotId,
+      cardId: string,
+      update: MissingItemsUpdate,
+      status: CardStatus | undefined,
       reviewer: Reviewer
     ): Effect.Effect<void, NotFoundError | DatabaseError>
     setCardStatus(

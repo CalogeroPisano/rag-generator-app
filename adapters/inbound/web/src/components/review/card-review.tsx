@@ -2,10 +2,13 @@ import {
   CircleCheckIcon,
   CircleHelpIcon,
   CircleXIcon,
+  EyeOffIcon,
   FileCodeIcon,
+  PlusIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
   TriangleAlertIcon,
+  Undo2Icon,
   UserCheckIcon,
   UserXIcon
 } from "lucide-react"
@@ -15,10 +18,12 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { ConfirmAction } from "./confirm-action"
 import {
   type CardData,
   type Content,
   formatReference,
+  type MissingItem,
   type Reference,
   SECTIONS,
   type SectionName,
@@ -137,6 +142,90 @@ function ReviewButtons({
   )
 }
 
+export type MissingAction = "add" | "ignore" | "restore"
+
+/** Add / ignore buttons of an undecided missing item (each behind a confirmation); the decision once taken. */
+function MissingActions({
+  item,
+  disabled,
+  onAction
+}: {
+  item: MissingItem
+  disabled: boolean
+  onAction: (action: MissingAction) => void
+}) {
+  const decision = item.decision
+  return (
+    // The item itself selects its lines: the buttons must not.
+    <span
+      className="ml-auto flex items-center gap-1"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {decision === undefined ? (
+        <>
+          <ConfirmAction
+            disabled={disabled}
+            trigger={
+              <>
+                <PlusIcon data-icon="inline-start" />
+                Aggiungi alla scheda
+              </>
+            }
+            title="Aggiungere alla scheda?"
+            description={`L'elemento entra nella sezione "${sectionLabels[item.section]}" con i suoi riferimenti, confermato da te. Viene creata una nuova versione della scheda, "In revisione"; puoi ritoccare il testo con "Modifica".`}
+            details={<p className="rounded-md border p-2 text-sm">{item.text}</p>}
+            confirmLabel="Aggiungi"
+            onConfirm={() => onAction("add")}
+          />
+          <ConfirmAction
+            disabled={disabled}
+            trigger={
+              <>
+                <EyeOffIcon data-icon="inline-start" />
+                Ignora
+              </>
+            }
+            title="Ignorare l'elemento?"
+            description="Non serve agli utenti o non è corretto: la scheda resta com'è e l'elemento non conta più tra i punti da controllare, anche nelle prossime verifiche. Puoi ripristinarlo."
+            confirmLabel="Ignora"
+            onConfirm={() => onAction("ignore")}
+          />
+        </>
+      ) : (
+        <>
+          <Badge
+            variant={decision.verdict === "added" ? "success" : "outline"}
+            title={formatDateTime(decision.reviewedAt)}
+          >
+            {decision.verdict === "added" ? (
+              <PlusIcon data-icon="inline-start" />
+            ) : (
+              <EyeOffIcon data-icon="inline-start" />
+            )}
+            {decision.verdict === "added" ? "Aggiunto" : "Ignorato"} da {decision.reviewer}
+          </Badge>
+          {decision.verdict === "ignored" && (
+            <ConfirmAction
+              disabled={disabled}
+              trigger={
+                <>
+                  <Undo2Icon data-icon="inline-start" />
+                  Ripristina
+                </>
+              }
+              title="Ripristinare l'elemento?"
+              description="Torna tra gli elementi mancanti da gestire e tra i punti da controllare della verifica."
+              confirmLabel="Ripristina"
+              onConfirm={() => onAction("restore")}
+            />
+          )}
+        </>
+      )}
+    </span>
+  )
+}
+
 function ReferenceChips({
   references,
   onOpen
@@ -219,6 +308,7 @@ export function CardReview({
   selected,
   onSelect,
   onReview,
+  onMissing,
   reviewDisabled
 }: {
   card: CardData
@@ -226,6 +316,8 @@ export function CardReview({
   onSelect: (statementId: string, reference: Reference | undefined) => void
   /** The reviewer's decision on a statement (`null` removes it). */
   onReview: (statementId: string, verdict: StatementReviewVerdict | null) => void
+  /** Decision on the missing item `index` of the verification. */
+  onMissing: (index: number, action: MissingAction) => void
   reviewDisabled: boolean
 }) {
   const { content, verification } = card
@@ -300,11 +392,16 @@ export function CardReview({
         )
       })}
 
-      {current && verification.missing.length > 0 && (
+      {verification !== null && verification.missing.length > 0 && (
         <section className="flex flex-col gap-2">
           <h3 className="flex items-center gap-2 font-medium">
             <TriangleAlertIcon className="size-4 text-warning" /> Mancanti secondo la verifica
           </h3>
+          <p className="text-muted-foreground">
+            Regole che la verifica ha trovato nel codice ma che la scheda non dice. Controlla il codice (clic sulla
+            voce), poi aggiungile alla scheda o ignorale se non servono agli utenti.
+            {!current && ` Elenco della verifica della versione ${verification.cardVersion}.`}
+          </p>
           <ul className="flex flex-col gap-1">
             {verification.missing.map((item, i) => {
               const id = `missing.${i}`
@@ -319,15 +416,21 @@ export function CardReview({
                     }}
                     className={cn(
                       "flex cursor-pointer flex-col gap-1.5 rounded-md border border-dashed px-3 py-2 hover:bg-muted",
-                      selected === id && "border-info/50 bg-info/5"
+                      selected === id && "border-info/50 bg-info/5",
+                      item.decision !== undefined && "border-solid opacity-70"
                     )}
                   >
                     <span>
                       <span className="text-muted-foreground">{sectionLabels[item.section]}: </span>
                       {item.text}
                     </span>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       <ReferenceChips references={item.references} onOpen={(reference) => onSelect(id, reference)} />
+                      <MissingActions
+                        item={item}
+                        disabled={reviewDisabled}
+                        onAction={(action) => onMissing(i, action)}
+                      />
                     </div>
                   </div>
                 </li>

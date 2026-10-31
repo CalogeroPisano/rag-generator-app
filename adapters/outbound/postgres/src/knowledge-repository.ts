@@ -420,6 +420,12 @@ export const KnowledgeRepositoryLive = Layer.effect(
               .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
               .returning({ id: card.id })
             if (updated.length === 0) return false
+            if (edit.missing !== undefined) {
+              await tx
+                .update(cardVerification)
+                .set({ missing: edit.missing.items, issues: edit.missing.issues })
+                .where(eq(cardVerification.cardId, cardId))
+            }
             await tx.delete(cardReference).where(eq(cardReference.cardId, cardId))
             for (const chunk of chunks(edit.references, INSERT_CHUNK)) {
               await tx.insert(cardReference).values(chunk.map((reference) => ({ cardId, ...reference })))
@@ -458,6 +464,33 @@ export const KnowledgeRepositoryLive = Layer.effect(
         ).pipe(
           Effect.flatMap((rows) =>
             rows.length > 0 ? Effect.void : Effect.fail(new NotFoundError({ entity: "card", id: cardId }))
+          )
+        ),
+
+      saveMissingItems: (id, cardId, update, status, reviewer) =>
+        query("knowledge.saveMissingItems", () =>
+          db.transaction(async (tx) => {
+            const found = await tx
+              .select({ id: card.id })
+              .from(card)
+              .innerJoin(cardVerification, eq(cardVerification.cardId, card.id))
+              .where(and(eq(card.snapshotId, id), eq(card.id, cardId)))
+            if (found.length === 0) return false
+            await tx
+              .update(cardVerification)
+              .set({ missing: update.items, issues: update.issues })
+              .where(eq(cardVerification.cardId, cardId))
+            if (status !== undefined) {
+              await tx
+                .update(card)
+                .set({ status, reviewedBy: reviewer.name, reviewedAt: new Date() })
+                .where(eq(card.id, cardId))
+            }
+            return true
+          })
+        ).pipe(
+          Effect.flatMap((found) =>
+            found ? Effect.void : Effect.fail(new NotFoundError({ entity: "card", id: cardId }))
           )
         ),
 

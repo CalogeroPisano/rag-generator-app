@@ -1,5 +1,5 @@
 import { statementText } from "./card-review"
-import { type CardData, type Statement, sectionLabels } from "./statements"
+import { type CardData, type Statement, sectionLabels, undecidedMissing } from "./statements"
 
 function StatementList({ card, statements }: { card: CardData; statements: ReadonlyArray<Statement> }) {
   return (
@@ -24,9 +24,8 @@ export function ApprovalDetails({
   toCheck: ReadonlyArray<Statement>
   wrong: ReadonlyArray<Statement>
 }) {
-  const current = card.verification !== null && card.verification.cardVersion === card.version
-  const missing = current ? card.verification.missing.length : 0
-  if (toCheck.length === 0 && wrong.length === 0 && missing === 0) return null
+  const missing = undecidedMissing(card)
+  if (toCheck.length === 0 && wrong.length === 0 && missing.length === 0) return null
   return (
     <div className="flex flex-col gap-3 text-sm">
       {toCheck.length > 0 && (
@@ -44,11 +43,23 @@ export function ApprovalDetails({
           <StatementList card={card} statements={wrong} />
         </div>
       )}
-      {missing > 0 && (
-        <span className="text-muted-foreground">
-          La verifica segnala anche {missing === 1 ? "un elemento mancante" : `${missing} elementi mancanti`} nella
-          scheda.
-        </span>
+      {missing.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">
+            {missing.length === 1
+              ? "Un elemento mancante non è stato né aggiunto né ignorato"
+              : `${missing.length} elementi mancanti non sono stati né aggiunti né ignorati`}
+            : approvando restano fuori dalla scheda.
+          </span>
+          <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border p-2 text-sm">
+            {missing.map(({ item, index }) => (
+              <li key={index}>
+                <span className="text-muted-foreground">{sectionLabels[item.section]}: </span>
+                {item.text}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   )

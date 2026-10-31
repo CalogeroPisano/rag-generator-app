@@ -15,7 +15,7 @@ import type { CodeFocus } from "@/components/code/code-viewer.client"
 import { PageHeader } from "@/components/page-header"
 import { CardEditor, type CardDraft, fromDraft, toDraft } from "@/components/review/card-editor"
 import { ApprovalDetails } from "@/components/review/approval-details"
-import { CardReview } from "@/components/review/card-review"
+import { CardReview, type MissingAction } from "@/components/review/card-review"
 import { CodePane } from "@/components/review/code-pane"
 import { ConfirmAction } from "@/components/review/confirm-action"
 import { allReferences, type Reference, statementsToCheck, wrongStatements } from "@/components/review/statements"
@@ -41,6 +41,7 @@ import { getProject } from "@/functions/projects.functions"
 import {
   changeCardStatus,
   changeStatementReview,
+  decideMissingItem,
   listCardJobs,
   saveCardEdit,
   startCardOperation,
@@ -184,6 +185,15 @@ function Review({
     mutationFn: (input: { statementId: string; verdict: "confirmed" | "wrong" | null }) =>
       changeStatementReview({ data: { snapshotId, cardId: cardId!, ...input } }),
     onSuccess: refresh,
+    onError
+  })
+  const missing = useMutation({
+    mutationFn: (input: { index: number; action: MissingAction }) =>
+      decideMissingItem({ data: { snapshotId, cardId: cardId!, ...input } }),
+    onSuccess: (_, input) => {
+      if (input.action === "add") toast.success("Elemento aggiunto alla scheda")
+      refresh()
+    },
     onError
   })
   const save = useMutation({
@@ -420,7 +430,8 @@ function Review({
                   selected={selected}
                   onSelect={select}
                   onReview={(statementId, verdict) => review.mutate({ statementId, verdict })}
-                  reviewDisabled={busy || pending || review.isPending}
+                  onMissing={(index, action) => missing.mutate({ index, action })}
+                  reviewDisabled={busy || pending || review.isPending || missing.isPending}
                 />
               ) : (
                 <CardEditor draft={draft} onChange={setDraft} files={files} currentPath={shownPath} card={data} />

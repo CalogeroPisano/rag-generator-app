@@ -19,7 +19,8 @@ import { AppConfig } from "../config.ts"
 import { CardContent, type StatementVerdict } from "../../domain/card.ts"
 import { DecisionModel, type DecisionQuestion, LanguageModel } from "../../ports/outbound/models.ts"
 import { Effect } from "effect"
-import type { FeatureSymbol, SnapshotId } from "../../domain/model.ts"
+import type { CardVerification, FeatureSymbol, MissingItem, SnapshotId } from "../../domain/model.ts"
+import { missingKey } from "../missing-items.ts"
 import type { Declaration, NewVerification } from "../../ports/outbound/repositories.ts"
 import { KnowledgeRepository, UnderstandingRepository } from "../../ports/outbound/repositories.ts"
 import { buildCardExcerpts, citedExcerpts } from "./excerpts.ts"
@@ -156,7 +157,13 @@ export const verifyCard = Effect.fnUntraced(function* (
   context: CallContext,
   feature: CardFeature,
   sources: CardSources,
-  card: { readonly content: CardContent; readonly version: number; readonly unreferencedStatements: number }
+  card: {
+    readonly content: CardContent
+    readonly version: number
+    readonly unreferencedStatements: number
+    /** Previous verification of the card: its ignored missing items stay ignored. */
+    readonly verification?: CardVerification | null
+  }
 ) {
   const decision = yield* DecisionModel
   const model = yield* LanguageModel
@@ -231,9 +238,18 @@ export const verifyCard = Effect.fnUntraced(function* (
     input: renderCardVerify({ feature, card: card.content, excerpts: excerpts.map(renderCardExcerpt) }),
     schema: CardMissingOutput
   })
+  const ignored = new Map(
+    (card.verification?.missing ?? []).flatMap((item) =>
+      item.decision?.verdict === "ignored" ? [[missingKey(item), item.decision] as const] : []
+    )
+  )
   const missing = answer.missing
     .filter((item) => item.text.trim() !== "")
-    .map((item) => ({ ...item, text: item.text.trim(), references: checkReferenceList(item.references, shown) }))
+    .map((item): MissingItem => {
+      const listed = { ...item, text: item.text.trim(), references: checkReferenceList(item.references, shown) }
+      const decision = ignored.get(missingKey(listed))
+      return decision === undefined ? listed : { ...listed, decision }
+    })
 
   const verdictOf = (probability: number): StatementVerdict =>
     probability >= thresholds.supported ? "supported" : probability < thresholds.unsupported ? "unsupported" : "partial"
@@ -243,7 +259,10 @@ export const verifyCard = Effect.fnUntraced(function* (
       ? { id: statement.id, verdict: "partial" as const, note: "Not assessed by the verifier." }
       : { id: statement.id, verdict: verdictOf(probability), note: "", probability }
   })
-  const issues = assessed.filter((s) => s.verdict !== "supported").length + missing.length + card.unreferencedStatements
+  const issues =
+    assessed.filter((s) => s.verdict !== "supported").length +
+    missing.filter((item) => item.decision === undefined).length +
+    card.unreferencedStatements
   return { cardVersion: card.version, statements: assessed, missing, issues } satisfies NewVerification
 })
 

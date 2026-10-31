@@ -73,6 +73,32 @@ export const changeStatementReview = createServerFn({ method: "POST" })
     )
   )
 
+/** Decision on a missing item of the verification: added to the card, ignored, or no longer ignored. */
+export const decideMissingItem = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    validate(
+      Schema.Struct({
+        ...CardRef,
+        index: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000 })),
+        action: Schema.Literals(["add", "ignore", "restore"])
+      })
+    )
+  )
+  .handler(({ data, context }) =>
+    runEffect(
+      data.action === "add"
+        ? Knowledge.addMissingItem(data.snapshotId, data.cardId, data.index, reviewer(context.user))
+        : Knowledge.ignoreMissingItem(
+            data.snapshotId,
+            data.cardId,
+            data.index,
+            data.action === "ignore",
+            reviewer(context.user)
+          )
+    )
+  )
+
 /** Card jobs queued or running for a project: the review page shows which cards are being processed. */
 export const listCardJobs = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
