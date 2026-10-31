@@ -185,11 +185,28 @@ describe.skipIf(url === undefined)("card review (PostgreSQL)", () => {
       "limits.0": "wrong",
       "errors.0": "confirmed"
     })
-    // Marking a statement wrong on an approved card reopens it; a manual edit (new version) clears the decisions.
+    // Marking a statement wrong on an approved card reopens it.
     await run(Knowledge.reviewStatement(snapshotId, cardId, "errors.0", "wrong", reviewer))
     expect((await card()).status).toBe("in_review")
-    await run(Knowledge.editCard(snapshotId, cardId, approved.content, reviewer))
-    expect((await card()).statementReviews).toEqual([])
+    // A manual edit keeps the decisions of the statements left identical (under their new ids) and drops the others.
+    await run(
+      Knowledge.editCard(
+        snapshotId,
+        cardId,
+        {
+          ...approved.content,
+          behavior: [{ text: "Creates an order.", references: approved.content.behavior[0]!.references }],
+          parameters: []
+        },
+        reviewer
+      )
+    )
+    const edited = await card()
+    expect(edited.version).toBe(approved.version + 1)
+    expect(Object.fromEntries(edited.statementReviews.map((r) => [r.id, r.verdict]))).toEqual({
+      "limits.0": "wrong",
+      "errors.0": "wrong"
+    })
   })
 
   it("verifies a card on demand and keeps review decisions", async () => {

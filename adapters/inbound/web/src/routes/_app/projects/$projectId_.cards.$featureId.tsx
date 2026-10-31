@@ -400,7 +400,7 @@ function Review({
                 }
                 title="Salvare la modifica?"
                 description={
-                  'Viene creata una nuova versione della scheda, "In revisione": la verifica precedente diventa non aggiornata e le tue decisioni sulle affermazioni si azzerano (gli indici delle affermazioni possono cambiare).'
+                  'Viene creata una nuova versione della scheda, "In revisione". Le tue decisioni sulle affermazioni rimaste identiche restano; quelle delle affermazioni modificate si azzerano. La verifica automatica riguarda la versione precedente: rilanciala con "Verifica".'
                 }
                 confirmLabel="Salva"
                 onConfirm={() => save.mutate(draft)}

@@ -445,7 +445,7 @@ export class KnowledgeRepository extends Context.Service<
       verification: NewVerification,
       provenance: Provenance
     ): Effect.Effect<void, DatabaseError>
-    /** Manual edit: new version, status `in_review`. */
+    /** Manual edit: new version, status `in_review`, with the given statement decisions. */
     editCard(
       id: SnapshotId,
       cardId: string,
@@ -453,6 +453,8 @@ export class KnowledgeRepository extends Context.Service<
         readonly content: CardContent
         readonly references: ReadonlyArray<NewCardReference>
         readonly unreferencedStatements: number
+        /** Reviewer decisions carried to the new version (statements left identical). */
+        readonly statementReviews: ReadonlyArray<StatementReview>
       },
       reviewer: Reviewer
     ): Effect.Effect<void, NotFoundError | DatabaseError>

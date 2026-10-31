@@ -240,7 +240,7 @@ export function CardEditor({
       <>
         <StatementStatus card={card} id={item.origin} />
         {originSection !== section && <Badge variant="outline">Da: {sectionLabels[originSection]}</Badge>}
-        {changed && <Badge variant="warning">Modificata: lo stato si azzera al salvataggio</Badge>}
+        {changed && <Badge variant="warning">Modificata: la tua decisione si azzera al salvataggio</Badge>}
       </>
     )
   }

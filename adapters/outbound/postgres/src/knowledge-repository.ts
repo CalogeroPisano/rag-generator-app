@@ -411,8 +411,8 @@ export const KnowledgeRepositoryLive = Layer.effect(
                 summary: edit.content.summary,
                 unreferencedStatements: edit.unreferencedStatements,
                 version: sql`${card.version} + 1`,
-                // A new version: statement ids may point at different statements now.
-                statementReviews: [],
+                // A new version: only the decisions on statements left identical, under their new ids.
+                statementReviews: [...edit.statementReviews],
                 status: "in_review",
                 reviewedBy: reviewer.name,
                 reviewedAt: new Date()

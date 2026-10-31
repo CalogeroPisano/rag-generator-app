@@ -135,7 +135,8 @@ inside `adapters/inbound/*` (hence `DATA_DIR=../../../.data`).
    card prompt of the feature and re-attached by `reattachCorrections` after `replaceFeatures`. Manual edits
    (`editCard`) and decisions (`setCardStatus`) are immediate; references are checked against the snapshot's files.
 4. Statement decisions (user's choice): `reviewStatement` stores confirmed/wrong per statement id on the card version
-   (`card.statement_reviews`, cleared by `editCard`, copied with `copyCard`); they override automatic verdicts in the
+   (`card.statement_reviews`; `editCard` keeps those of identical statements, `carryStatementReviews`; copied with
+   `copyCard`); they override automatic verdicts in the
    UI; approving (`setCardStatus` approved) confirms every undecided statement. Every card action in the UI goes
    through a confirmation dialog (`ConfirmAction`); the approval dialog lists statements to check, wrong ones and
    missing items. The editor shows the status of the statement each item comes from (`origin` in the draft).

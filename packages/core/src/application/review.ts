@@ -40,6 +40,7 @@ import {
 import { checkReferences } from "./understanding/references.ts"
 import { provenance, toPhaseError } from "./understanding/shared.ts"
 import { requestIndexing } from "./rag/indexing.ts"
+import { carryStatementReviews } from "./statement-reviews.ts"
 import { ensureNotUpdating } from "./updates.ts"
 
 /** A feature of the map. */
@@ -286,7 +287,13 @@ export const editCard = Effect.fn("editCard")(function* (
       .map((file) => [file.path, { totalLines: file.lineCount, ranges: [[1, file.lineCount] as const] }])
   )
   const checked = checkReferences(content, shown)
-  yield* knowledge.editCard(snapshotId, cardId, checked, reviewer)
+  const before = yield* knowledge.getCard(snapshotId, cardId)
+  yield* knowledge.editCard(
+    snapshotId,
+    cardId,
+    { ...checked, statementReviews: carryStatementReviews(before.content, checked.content, before.statementReviews) },
+    reviewer
+  )
   yield* requestIndexing(snapshotId)
 })
 
