@@ -1,6 +1,7 @@
 import {
   AppConfig,
   type CardContent,
+  ChatConversationView,
   Evaluation,
   type Job,
   Jobs,
@@ -8,6 +9,7 @@ import {
   Projects,
   Rag,
   type SnapshotId,
+  TestRunView,
   UploadId,
   UserId
 } from "@code-to-rag/core"
@@ -30,7 +32,7 @@ import {
 import { Database } from "@code-to-rag/postgres"
 import { makeTestDatabaseLayer, resetDatabase, testDatabaseUrl } from "@code-to-rag/postgres/testing"
 import { sql } from "drizzle-orm"
-import { Effect, Layer, ManagedRuntime, Option } from "effect"
+import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect"
 import { randomBytes, randomUUID } from "node:crypto"
 import * as fs from "node:fs/promises"
 import * as os from "node:os"
@@ -310,6 +312,8 @@ describe.skipIf(url === undefined)("RAG index, chat and tests (PostgreSQL + pgve
       ["user", "complete"],
       ["assistant", "complete"]
     ])
+    // The web encodes it with the class schema, which rejects plain objects.
+    expect(() => Schema.encodeSync(ChatConversationView)(view)).not.toThrow()
     const answer = view.messages[1]!
     expect(answer.citations).toEqual([1])
     expect(answer.sources[0]).toMatchObject({ featureId: prices.id, title: "Prices" })
@@ -347,7 +351,9 @@ describe.skipIf(url === undefined)("RAG index, chat and tests (PostgreSQL + pgve
     // The chat answers citing source 1, which is the right card only when retrieval ranks it first.
     const job = await run(Evaluation.requestEvaluation(snapshotId, { approvedOnly: false }))
     expect((await runClaimed()).status).toBe("succeeded")
-    const { run: testRun, results } = await run(EvaluationRepository.use((e) => e.getRun(job.id)))
+    const runView = await run(EvaluationRepository.use((e) => e.getRun(job.id)))
+    expect(() => Schema.encodeSync(TestRunView)(runView)).not.toThrow()
+    const { run: testRun, results } = runView
     expect(testRun).toMatchObject({ status: "ready", questions: 3, topK: 5, approvedOnly: false })
     expect(results).toHaveLength(3)
     expect(results.every((r) => r.rank !== null && r.verdict === "correct")).toBe(true)

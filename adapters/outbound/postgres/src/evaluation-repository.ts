@@ -1,4 +1,10 @@
-import { EvaluationRepository, featureKey, NotFoundError, type TestResult } from "@code-to-rag/core/outbound"
+import {
+  EvaluationRepository,
+  featureKey,
+  NotFoundError,
+  type TestResult,
+  TestRunView
+} from "@code-to-rag/core/outbound"
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { randomUUID } from "node:crypto"
@@ -169,7 +175,8 @@ export const EvaluationRepositoryLive = Layer.effect(
         ])
         const row = runs[0]
         if (row === undefined) return yield* new NotFoundError({ entity: "test run", id: runId })
-        return {
+        // A class instance: the web encodes it with the class schema, which rejects plain objects.
+        return new TestRunView({
           run: yield* runView(row.run, row.revision),
           results: yield* Effect.forEach(results, (result) =>
             decodeTestResult({
@@ -185,7 +192,7 @@ export const EvaluationRepositoryLive = Layer.effect(
               note: result.note
             })
           )
-        }
+        })
       }),
 
       saveResult: (runId, result) =>

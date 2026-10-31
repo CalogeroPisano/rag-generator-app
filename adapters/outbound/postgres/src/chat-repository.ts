@@ -1,4 +1,4 @@
-import { ChatRepository, NotFoundError } from "@code-to-rag/core/outbound"
+import { ChatConversationView, ChatRepository, NotFoundError } from "@code-to-rag/core/outbound"
 import { and, asc, desc, eq } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { randomUUID } from "node:crypto"
@@ -75,10 +75,11 @@ export const ChatRepositoryLive = Layer.effect(
             .where(eq(chatMessage.conversationId, conversationId))
             .orderBy(asc(chatMessage.createdAt))
         )
-        return {
+        // A class instance: the web encodes it with the class schema, which rejects plain objects.
+        return new ChatConversationView({
           conversation: yield* conversationView(row),
           messages: yield* Effect.forEach(messages, messageView)
-        }
+        })
       }),
 
       addMessage: Effect.fnUntraced(function* (conversationId, message) {

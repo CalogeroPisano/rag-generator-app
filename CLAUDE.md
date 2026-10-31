@@ -265,6 +265,8 @@ EXISTS`, serial → `bigserial`), deletion of the project's rows, multi-row INSE
   `Effect.fnUntraced`; errors are `Schema.TaggedError`. One `ManagedRuntime` in the web app
   (`adapters/inbound/web/src/server/runtime.server.ts`).
 - DB rows are validated with the domain schemas when they leave the database (`adapters/outbound/postgres/src/rows.ts`).
+  A port returning a `Schema.Class` must return an instance (decoded or `new X(...)`), never a plain object of the
+  same shape: the web encodes results with the class schema, which rejects plain objects.
 - Server functions: `createServerFn().middleware([authMiddleware]).validator(Schema.toStandardSchemaV1(...))`;
   results are encoded to plain objects (`Schema.encodeSync`) before crossing the network.
 - Files named `*.server.ts` are server-only; `*.client.ts(x)` are browser-only (Monaco).
